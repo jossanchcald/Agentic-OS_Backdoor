@@ -1,31 +1,27 @@
 #include <stdio.h>   // A ver lib estandar para hacer input y output
 #include <stdlib.h>  // Lib estandar paraaa funciones comunes creo
 #include <unistd.h>  // Lib para funciones de sleep, fork y otras cosas relacionadas con el sistema operativo
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
-//#include <time.h> // Lib pa usar para generar numeros aleatorios
-#include <time.h>
+#include <time.h> // Lib pa usar para generar numeros aleatorios
 #include <X11/Xutil.h>
 
 // Librerias para manejar ventanas y eventos de teclado en X11 que uso el profe
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
-#include <stdio.h>
 
-// Librerias para IPC POSIX Message Queue
-#include <fcntl.h>    /* For O_* constants (O_CREAT, O_RDWR, etc.) */
-#include <sys/stat.h> /* For mode constants (permissions) */
-#include <mqueue.h>   /* For POSIX message queue functions */
+// Importamos el protocolo de los mensajes
+#include "protocoloComms.h"
 
-typedef struct {
-    KeySym keysym;
-    pid_t pid;
-} Mensaje;
-
-int createWindow(mqd_t mq)
+int createWindow(int socket_fd)
 {
     Display *display = XOpenDisplay(NULL);
-    if (!display)
-    {
+    if (!display) {
         fprintf(stderr, "Cannot open display\n");
         return 1;
     }
@@ -38,109 +34,56 @@ int createWindow(mqd_t mq)
         10, 10, 400, 200,
         1,
         BlackPixel(display, screen),
-        WhitePixel(display, screen));
+        WhitePixel(display, screen)
+    );
 
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
 
     XEvent event;
 
-    while (1)
-    {
+    while (1) {
         XNextEvent(display, &event);
 
-        if (event.type == KeyPress)
-        {
+        // Preparar y enviar el mensaje estructurado
+        Mensaje mensaje;
+
+        mensaje.tipo_mensaje = 1; 
+        mensaje.pid_ventana = getpid();
+
+        if (event.type == KeyPress) {
             KeySym keysym = XLookupKeysym(&event.xkey, 0);
-
-            Mensaje msg = {
-                keysym, 
-                getpid()
-            };
-
-            // Mando la tecla que se presionó con prioridad 1
-            mq_send(mq, &msg, sizeof(Mensaje), 1);
+            mensaje.tecla = keysym;
 
             char *name = XKeysymToString(keysym);
-            if (name)
-            {
+            if (name) {
                 printf("Key pressed: %s\n", name);
-            }
-            else
-            {
+            } else {
                 printf("Unknown key\n");
             }
 
-            if (keysym == XK_Escape)
-                printf("PROCESS_FINISHED");
-                break;
+            if (keysym == XK_Escape){
+                mensaje.tipo_mensaje = 2;
+                if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0)
+                {
+                    perror("Error al enviar la tecla");
+                } else
+                {
+                    printf("Mensaje enviado a la red.\n");
+                }
                 
-        }
-    }
-
-    XDestroyWindow(display, window);
-    XCloseDisplay(display);
-    return 0;
-}
-
-int createWindowRndPos() {
-    Display *display = XOpenDisplay(NULL);
-    if (!display)
-    {
-        fprintf(stderr, "Cannot open display\n");
-        return 1;
-    }
-
-    int screen = DefaultScreen(display);
-    int anchoDsp = DisplayWidth(display, screen);
-    int altoDsp = DisplayHeight(display, screen);
-
-    srand(time(NULL) + getpid()); // Inicializamos el rand con una semilla pa q sea random de verda
-    
-    int x = rand() % (anchoDsp + 20) + 10;
-    int y = rand() % (altoDsp + 20) + 10;
-
-    Window window = XCreateSimpleWindow(
-        display,
-        RootWindow(display, screen),
-        x, y, 400, 200,
-        1,
-        BlackPixel(display, screen),
-        WhitePixel(display, screen));
-
-    XSizeHints hints;
-    hints.flags = USPosition;
-    hints.x = x;
-    hints.y = y;
-
-    XSetNormalHints(display, window, &hints);
-
-    XSelectInput(display, window, ExposureMask | KeyPressMask);
-    XMapWindow(display, window);
-
-    XEvent event;
-
-    while (1)
-    {
-        XNextEvent(display, &event);
-
-        if (event.type == KeyPress)
-        {
-            KeySym keysym = XLookupKeysym(&event.xkey, 0);
-
-            char *name = XKeysymToString(keysym);
-            if (name)
-            {
-                printf("Key pressed: %s\n", name);
-            }
-            else
-            {
-                printf("Unknown key\n");
-            }
-
-            if (keysym == XK_Escape)
                 break;
-        }
+            } else {
+                if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0)
+                {
+                    perror("Error al enviar la tecla");
+                } else
+                {
+                    printf("Mensaje enviado a la red.\n");
+                }
+                
+            }
+        }        
     }
 
     XDestroyWindow(display, window);
@@ -150,18 +93,11 @@ int createWindowRndPos() {
 
 int main()
 {
-    struct mq_attr attr;
-    attr.mq_flags = 0;
-    attr.mq_maxmsg = 1000;    /* Max number of messages in queue */
-    attr.mq_msgsize = 2048; /* Max message size in bytes */
-    attr.mq_curmsgs = 0;
-
-    // Open or create the queue
-    mqd_t mq = mq_open("/backdoor_queue", O_CREAT | O_RDWR, 0644, &attr);
 
     int n;
     printf("Ingrese el numero de ventanas a crear: ");
     scanf("%d", &n);
+
 
     for (int i = 0; i < n; i++)
     {
@@ -174,19 +110,47 @@ int main()
         }
         else if (pid == 0)
         {
-            createWindow(mq);
+            // Creamos un socket por ventana, asi cada conexion con ialearner representa un proceso y ventana unicos
+            int socket_fd; // Descriptor de archivos del socket que vamos a crear
+            struct sockaddr_in socket_address; // Direccion del 'servidor', IP y puerto para IPv4 
+            
+            // Creamos el socket TCP (para la comunicacion en la red, ahora es el mismo equipo, pero como el proyecto indica
+            // el proceso ialearner de IBM es remoto, asi que es lo que se usaria en realidad)
+            if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+                perror("Error al crear socket");
+                return 1;
+            }
+
+            // Nombrar el socket como se acordó con el servidor
+            socket_address.sin_family = AF_INET; // IPv4
+            socket_address.sin_port = htons(PUERTO); // Puerto 8080
+            
+            // Configurado a localhost (127.0.0.1). Si lo aplicamos a la realidad cambiará a la IP remota.
+            // La ocnvertimos a binario y ponemos en socket_address.sin_addr
+            // inet_pton = Pointer tp network, convierte una dirección IP de texto a formato binario numérico.
+            // Soporta IPv4 e IPv6
+            if (inet_pton(AF_INET, "127.0.0.1", &socket_address.sin_addr) <= 0) {
+                perror("Dirección inválida");
+                return 1;
+            }
+
+            // Nos conectamos al programa receptor (ialearner de IBM)
+            if (connect(socket_fd, (struct sockaddr *)&socket_address, sizeof(socket_address)) < 0) {
+                perror("Conexión fallida. Verificar estado del receptor");
+                return 1;
+            }
+
+            createWindow(socket_fd);
+            close(socket_fd);
             exit(0);
         }
     }
 
+    // Clean up
     for (int i = 0; i < n; i++)
     {
         wait(NULL);
     }
 
-
-    // Parte final, ya al cerrar, liberamos recursos de la msg queue
-    // Clean up
-    mq_close(mq);
-    mq_unlink("/backdoor_queue");
+    return 0;
 }
