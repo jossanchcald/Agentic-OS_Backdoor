@@ -1,6 +1,5 @@
 
-#include <sys/types.h> // para pid_t
-#include <X11/keysym.h> // para KeySym
+#include <sys/types.h>
 
 #define PUERTO 8080  
 
@@ -8,6 +7,7 @@
 typedef struct {
     int tipo_mensaje;
     pid_t pid_ventana;
-    KeySym tecla;
+    char tecla;
 } Mensaje;
 
+ 

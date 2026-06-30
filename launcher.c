@@ -52,36 +52,36 @@ int createWindow(int socket_fd)
         mensaje.pid_ventana = getpid();
 
         if (event.type == KeyPress) {
-            KeySym keysym = XLookupKeysym(&event.xkey, 0);
-            mensaje.tecla = keysym;
+            KeySym keysym;
+            char buffer_tecla[32];
 
-            char *name = XKeysymToString(keysym);
-            if (name) {
-                printf("Key pressed: %s\n", name);
-            } else {
-                printf("Unknown key\n");
+            // La funcion XLookupString traduce un evento de tecla al texto real que debería producir, presionas ',', da ',' en el buffer
+            int n = XLookupString(&event.xkey, buffer_tecla, sizeof(buffer_tecla) - 1, &keysym, NULL);
+            buffer_tecla[n] = '\0'; // aseguramos el string, n es el numero de bytes guardado en el buffer
+
+            if (keysym == XK_Escape) {
+                mensaje.tipo_mensaje = 2;
+                if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0) {
+                    perror("Error al enviar la tecla");
+                } else {
+                    printf("Ventana finalizada correctamente\n");
+                }
+                break;
+            } else if (keysym == XK_Return) {
+                // fin de palabra/oración
+            } else if (keysym == XK_BackSpace || keysym == XK_Tab) {
+                mensaje.tipo_mensaje = 3;
+            } else if (n > 0) {
+                // Agregamos la tecla que se presiona, solo nos interesan letras normales asi que solo 1 caracter
+                mensaje.tecla = buffer_tecla[0];
+            } else if (n == 0) { // Se presiona una tecla que no genera texto, como shift, mayus, f1, etc
+                continue;
             }
 
-            if (keysym == XK_Escape){
-                mensaje.tipo_mensaje = 2;
-                if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0)
-                {
-                    perror("Error al enviar la tecla");
-                } else
-                {
-                    printf("Mensaje enviado a la red.\n");
-                }
-                
-                break;
+            if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0) {
+                perror("Error al enviar la tecla");
             } else {
-                if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0)
-                {
-                    perror("Error al enviar la tecla");
-                } else
-                {
-                    printf("Mensaje enviado a la red.\n");
-                }
-                
+                printf("Mensaje enviado a la red.\n");
             }
         }        
     }
@@ -99,6 +99,22 @@ int main()
     scanf("%d", &n);
 
 
+    struct sockaddr_in server_address; // Direccion del 'servidor', IP y puerto para IPv4 
+    
+    // Nombrar el socket como se acordó con el servidor
+    server_address.sin_family = AF_INET; // IPv4
+    server_address.sin_port = htons(PUERTO); // Puerto 8080
+            
+    // Configurado a localhost (127.0.0.1). Si lo aplicamos a la realidad cambiará a la IP remota.
+    // La ocnvertimos a binario y ponemos en server_address.sin_addr
+    // inet_pton = Pointer tp network, convierte una dirección IP de texto a formato binario numérico.
+    // Soporta IPv4 e IPv6
+    if (inet_pton(AF_INET, "127.0.0.1", &server_address.sin_addr) <= 0) {
+        perror("Dirección inválida");
+        return 1;
+    }
+
+
     for (int i = 0; i < n; i++)
     {
         pid_t pid = fork();
@@ -112,8 +128,7 @@ int main()
         {
             // Creamos un socket por ventana, asi cada conexion con ialearner representa un proceso y ventana unicos
             int socket_fd; // Descriptor de archivos del socket que vamos a crear
-            struct sockaddr_in socket_address; // Direccion del 'servidor', IP y puerto para IPv4 
-            
+
             // Creamos el socket TCP (para la comunicacion en la red, ahora es el mismo equipo, pero como el proyecto indica
             // el proceso ialearner de IBM es remoto, asi que es lo que se usaria en realidad)
             if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -121,21 +136,8 @@ int main()
                 return 1;
             }
 
-            // Nombrar el socket como se acordó con el servidor
-            socket_address.sin_family = AF_INET; // IPv4
-            socket_address.sin_port = htons(PUERTO); // Puerto 8080
-            
-            // Configurado a localhost (127.0.0.1). Si lo aplicamos a la realidad cambiará a la IP remota.
-            // La ocnvertimos a binario y ponemos en socket_address.sin_addr
-            // inet_pton = Pointer tp network, convierte una dirección IP de texto a formato binario numérico.
-            // Soporta IPv4 e IPv6
-            if (inet_pton(AF_INET, "127.0.0.1", &socket_address.sin_addr) <= 0) {
-                perror("Dirección inválida");
-                return 1;
-            }
-
             // Nos conectamos al programa receptor (ialearner de IBM)
-            if (connect(socket_fd, (struct sockaddr *)&socket_address, sizeof(socket_address)) < 0) {
+            if (connect(socket_fd, (struct sockaddr *)&server_address, sizeof(server_address)) < 0) {
                 perror("Conexión fallida. Verificar estado del receptor");
                 return 1;
             }
