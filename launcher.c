@@ -1,25 +1,21 @@
-#include <stdio.h>   // A ver lib estandar para hacer input y output
-#include <stdlib.h>  // Lib estandar paraaa funciones comunes creo
-#include <unistd.h>  // Lib para funciones de sleep, fork y otras cosas relacionadas con el sistema operativo
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/wait.h>
-
-#include <time.h> // Lib pa usar para generar numeros aleatorios
+#include <time.h>
 #include <X11/Xutil.h>
 
 // Librerias para manejar ventanas y eventos de teclado en X11 que uso el profe
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
-
-// Importamos el protocolo de los mensajes
 #include "protocoloComms.h"
 
-int createWindow(int socket_fd)
-{
+int createWindow(int socket_fd) {
     Display *display = XOpenDisplay(NULL);
     if (!display) {
         fprintf(stderr, "Cannot open display\n");
@@ -48,7 +44,7 @@ int createWindow(int socket_fd)
         // Preparar y enviar el mensaje estructurado
         Mensaje mensaje;
 
-        mensaje.tipo_mensaje = 1; 
+        mensaje.tipo_mensaje = TMSG_TECLA; 
         mensaje.pid_ventana = getpid();
 
         if (event.type == KeyPress) {
@@ -60,26 +56,26 @@ int createWindow(int socket_fd)
             buffer_tecla[n] = '\0'; // aseguramos el string, n es el numero de bytes guardado en el buffer
 
             if (keysym == XK_Escape) {
-                mensaje.tipo_mensaje = 2;
+                mensaje.tipo_mensaje = TMSG_CIERRE;
                 if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0) {
-                    perror("Error al enviar la tecla");
+                    perror("Error al enviar el mensaje de cierre");
                 } else {
                     printf("Ventana finalizada correctamente\n");
                 }
                 break;
             } else if (keysym == XK_Return) {
-                // fin de palabra/oración
-            } else if (keysym == XK_BackSpace || keysym == XK_Tab) {
-                mensaje.tipo_mensaje = 3;
+                mensaje.tipo_mensaje = TMSG_FIN_ORACION;
+            } else if (keysym == XK_BackSpace) {
+                mensaje.tipo_mensaje = TMSG_BACKSPACE;
             } else if (n > 0) {
-                // Agregamos la tecla que se presiona, solo nos interesan letras normales asi que solo 1 caracter
+                // Agregamos la tecla que se presiona, solo nos interesan letras normales asi que solo 1 char
                 mensaje.tecla = buffer_tecla[0];
             } else if (n == 0) { // Se presiona una tecla que no genera texto, como shift, mayus, f1, etc
                 continue;
             }
 
             if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0) {
-                perror("Error al enviar la tecla");
+                perror("Error al enviar el mensaje");
             } else {
                 printf("Mensaje enviado a la red.\n");
             }
@@ -91,13 +87,11 @@ int createWindow(int socket_fd)
     return 0;
 }
 
-int main()
-{
+int main() {
 
     int n;
     printf("Ingrese el numero de ventanas a crear: ");
     scanf("%d", &n);
-
 
     struct sockaddr_in server_address; // Direccion del 'servidor', IP y puerto para IPv4 
     
