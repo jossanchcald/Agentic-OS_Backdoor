@@ -109,17 +109,14 @@ int main() {
     }
 
 
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         pid_t pid = fork();
 
-        if (pid < 0)
-        {
+        if (pid < 0) {
             perror("Error con el fork");
             exit(1);
         }
-        else if (pid == 0)
-        {
+        else if (pid == 0) {
             // Creamos un socket por ventana, asi cada conexion con ialearner representa un proceso y ventana unicos
             int socket_fd; // Descriptor de archivos del socket que vamos a crear
 

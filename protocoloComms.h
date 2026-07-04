@@ -7,8 +7,6 @@
 #define TMSG_BACKSPACE 3
 #define TMSG_FIN_ORACION 4
 
-#define MSG_CALCULAR_USER 10 // Msg de control, terminaron todas las ventanas
-
 // Estructura de los mensajes
 typedef struct {
     int tipo_mensaje;

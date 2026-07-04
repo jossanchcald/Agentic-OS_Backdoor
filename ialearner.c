@@ -25,16 +25,16 @@
 #define USERT_PROF 3
 #define USERT_ESTUD 4
 
-#define UMBRAL_ADMIN 0.90
+#define UMBRAL_ADMIN 0.90 // hardcodeado
+
+pthread_t *arrHilos = NULL; // Array para almacenar los identificadores de los hilos
+size_t totalHilos = 0; // Tamaño real del arreglo de ids de hilos
+size_t capacidadArrHilos = 100; // El espacio reservado para el arreglo de ids de hilos
 
 pthread_mutex_t mutex_resultados = PTHREAD_MUTEX_INITIALIZER;
 int ventanasCorreo = 0;
 int ventanasArticulo = 0;
 int ventanasReporte = 0;
-
-pthread_t *arrHilos = NULL; // Array para almacenar los identificadores de los hilos
-size_t totalHilos = 0; // Tamaño real del arreglo de ids de hilos
-size_t capacidadArrHilos = 100; // El espacio reservado para el arreglo de ids de hilos
 
 typedef struct {
     char palabra_actual[TAM_MAX_PALABRA];
@@ -61,7 +61,7 @@ typedef struct {
 const char *delimitadores = " ,./|:;\'\t";
 
 // Diccionarios
-const char* correo_electronico[] = {
+char* correo_electronico[] = {
     "Thank",
     "Please",
     "Regards",
@@ -73,7 +73,7 @@ const char* correo_electronico[] = {
     "Team",
     "Project"
 };
-const char* articulo_cientifico[] = {
+char* articulo_cientifico[] = {
     "Data",
     "Analysis",
     "Results",
@@ -85,7 +85,7 @@ const char* articulo_cientifico[] = {
     "Significant",
     "Effect"
 };
-const char* reporte[] = {
+char* reporte[] = {
     "System",
     "Data",
     "Network",
@@ -361,6 +361,7 @@ void *hiloVentana(void *param) {
             int categoria = clasificarOracion(&estado);
 
             int usuario = 0;
+
             pthread_mutex_lock(&mutex_resultados);
             int total = ventanasCorreo + ventanasArticulo + ventanasReporte;
 
@@ -412,33 +413,7 @@ void *hiloVentana(void *param) {
 }
 
 void *hiloControl(void *param) {
-    int socket_control = *(int *)param;
-    free(param);
-
-    Mensaje msg;
-    while (recv(socket_control, &msg, sizeof(Mensaje), 0) > 0) {
-        if (msg.tipo_mensaje == MSG_CALCULAR_USER) {
-            pthread_mutex_lock(&mutex_resultados);
-
-            int total = ventanasCorreo + ventanasArticulo + ventanasReporte;
-            printf("\n=== Fin de lote: correo=%d articulo=%d reporte=%d ===\n",
-                   ventanasCorreo, ventanasArticulo, ventanasReporte);
-
-            int usuario = 0;
-            if (total > 0) {
-                double pC = (double)ventanasCorreo / total;
-                double pA = (double)ventanasArticulo / total;
-                double pR = (double)ventanasReporte / total;
-                usuario = inferirUsuarioPorProporcion(pC, pA, pR);
-            }
-            printf(">>> Tipo de usuario inferido: %s\n\n", nombreUsuario(usuario));
-
-            ventanasCorreo = ventanasArticulo = ventanasReporte = 0; // reset para siguiente lote
-            pthread_mutex_unlock(&mutex_resultados);
-        }
-    }
-    close(socket_control);
-    return NULL;
+    //
 }
 
 int main(){
@@ -485,7 +460,7 @@ int main(){
 
     printf("Receptor listo, esperando mensajes en el puerto %d...\n", PUERTO);
 
-    // Primera conexion siempre es la de control del launcher
+    /*
     int socket_control_fd = accept(server_sockfd, (struct sockaddr *)&client_address, (socklen_t*)&addrlen);
     if (socket_control_fd < 0) { 
         perror("Accept control fallo");
@@ -495,7 +470,7 @@ int main(){
     int *ctrl_ptr = malloc(sizeof(int));
     *ctrl_ptr = socket_control_fd;
     pthread_t hiloDeControl;
-    pthread_create(&hiloDeControl, NULL, hiloControl, ctrl_ptr);
+    pthread_create(&hiloDeControl, NULL, hiloControl, ctrl_ptr); */
 
     // Bucle infinito para recibir las conexiones de las ventanas
     while(1) {
