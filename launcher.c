@@ -8,12 +8,71 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <time.h>
-#include <X11/Xutil.h>
+#include <ctype.h>
+#include "protocoloComms.h"
 
 // Librerias para manejar ventanas y eventos de teclado en X11 que uso el profe
+#include <X11/Xutil.h>
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
-#include "protocoloComms.h"
+
+typedef struct {
+    char host[256];
+    int puerto;
+} ConfigLauncher;
+
+int parsearLauncherConf(const char *ruta, ConfigLauncher *cfg) {
+    FILE *f = fopen(ruta, "r");
+    if (!f) {
+        fprintf(stderr, "No se pudo abrir '%s'. Verificar integridad de archivo de configuración\n", ruta);
+        return -1;
+    }
+
+    cfg->host[0] = '\0';
+    cfg->puerto = 0;
+
+    char linea[256];
+    int num_linea = 0;
+    while (fgets(linea, sizeof(linea), f)) {
+        num_linea++;
+
+        // Hacemos trim a la linea leida
+        char *lineaT = linea;
+        while (*lineaT && isspace((unsigned char)*lineaT)) {
+            lineaT++;
+        }
+
+        char *fin = lineaT + strlen(lineaT) - 1;
+        while (fin > lineaT && isspace((unsigned char)*fin)) {
+            *fin-- = '\0';
+        }
+        if (*lineaT == '\0' || *lineaT == '#') continue;
+
+        if (strncmp(lineaT, "IALEARNER_HOST ", 15) == 0) {
+            strncpy(cfg->host, lineaT + 15, sizeof(cfg->host) - 1);
+
+        } else if (strncmp(lineaT, "IALEARNER_PORT ", 15) == 0) {
+            cfg->puerto = atoi(lineaT + 15);
+
+            if (cfg->puerto <= 0 || cfg->puerto > 65535) {
+                fprintf(stderr, "[launcher.conf] Linea %d: puerto invalido\n", num_linea);
+                fclose(f);
+                return -1;
+            }
+        }
+    }
+    fclose(f);
+
+    if (cfg->host[0] == '\0') {
+        fprintf(stderr, "[launcher.conf] Falta IALEARNER_HOST\n");
+        return -1;
+    }
+    if (cfg->puerto == 0) {
+        fprintf(stderr, "[launcher.conf] Falta IALEARNER_PORT\n");
+        return -1;
+    }
+    return 0;
+}
 
 int createWindow(int socket_fd) {
     Display *display = XOpenDisplay(NULL);
@@ -87,24 +146,40 @@ int createWindow(int socket_fd) {
     return 0;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
 
+    // Determinar dinámicamente la ruta del archivo .conf
+    const char *ruta_conf = "/config/launcher.conf"; // Ruta por defecto
+    if (argc > 1) {
+        ruta_conf = argv[1]; // Si se pasó un argumento, usamos ese archivo
+    }
+
+    // Parsear el archivo de configuración
+    ConfigLauncher config;
+    if (parsearLauncherConf(ruta_conf, &config) != 0) {
+        fprintf(stderr, "[launcher] Error: No se pudo cargar la configuración desde '%s'\n", ruta_conf);
+        return 1;
+    }
+
+    // Solicitar número de ventanas
     int n;
     printf("Ingrese el numero de ventanas a crear: ");
-    scanf("%d", &n);
+    if (scanf("%d", &n) != 1 || n <= 0) {
+        fprintf(stderr, "Número de ventanas inválido.\n");
+        return 1;
+    }
 
-    struct sockaddr_in server_address; // Direccion del 'servidor', IP y puerto para IPv4 
-    
-    // Nombrar el socket como se acordó con el servidor
+    // Configurar la dirección del servidor usando los datos leídos del archivo
+    struct sockaddr_in server_address; 
     server_address.sin_family = AF_INET; // IPv4
-    server_address.sin_port = htons(PUERTO); // Puerto 8080
-            
+    server_address.sin_port = htons(config.puerto); // Usamos el puerto del .conf
+
     // Configurado a localhost (127.0.0.1). Si lo aplicamos a la realidad cambiará a la IP remota.
     // La ocnvertimos a binario y ponemos en server_address.sin_addr
     // inet_pton = Pointer tp network, convierte una dirección IP de texto a formato binario numérico.
     // Soporta IPv4 e IPv6
-    if (inet_pton(AF_INET, "127.0.0.1", &server_address.sin_addr) <= 0) {
-        perror("Dirección inválida");
+    if (inet_pton(AF_INET, config.host, &server_address.sin_addr) <= 0) {
+        fprintf(stderr, "Error: La IP '%s' especificada en %s no es válida.\n", config.host, ruta_conf);
         return 1;
     }
 
@@ -140,8 +215,7 @@ int main() {
     }
 
     // Clean up
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         wait(NULL);
     }
 

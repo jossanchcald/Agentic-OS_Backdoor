@@ -8,17 +8,19 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include "protocoloComms.h"
+#include "config.h"
 
+// - harcode
 #define NUM_PALABRAS_DICC 10
 #define NUM_DICCIONARIOS 3
 #define TAM_MAX_PALABRA 32
 
-// Tipos de ventanas
+// Tipos de ventanas - harcode
 #define TIPO_CORREO 1
 #define TIPO_ARTICULO 2
 #define TIPO_REPORTE 3
 
-// Tipos de usuarios
+// Tipos de usuarios - hardcode
 #define USERT_DESCONOCIDO 0
 #define USERT_PERS_ADMIN 1
 #define USERT_PERS_TECN 2
@@ -32,6 +34,7 @@ size_t totalHilos = 0; // Tamaño real del arreglo de ids de hilos
 size_t capacidadArrHilos = 100; // El espacio reservado para el arreglo de ids de hilos
 
 pthread_mutex_t mutex_resultados = PTHREAD_MUTEX_INITIALIZER;
+// - harcode
 int ventanasCorreo = 0;
 int ventanasArticulo = 0;
 int ventanasReporte = 0;
@@ -57,10 +60,10 @@ typedef struct {
     size_t capacidad_historial;
 } EstadoClasificacionVentana; // El estado actual de clasificacion de la ventana, todo lo que se ha preisonado, y la palabra y oracion actual q se tiene
 
-// Delimitadores que separan palabras
+// Delimitadores que separan palabras - harcode
 const char *delimitadores = " ,./|:;\'\t";
 
-// Diccionarios
+// Diccionarios - harcode
 char* correo_electronico[] = {
     "Thank",
     "Please",
@@ -98,7 +101,7 @@ char* reporte[] = {
     "Infrastructure"
 };
 
-/* retorna el nombre del tipo de ventana*/
+/* retorna el nombre del tipo de ventana - harcode*/
 const char *nombreTipoVentana(int tipo) {
     switch (tipo) {
         case TIPO_CORREO: 
@@ -112,7 +115,7 @@ const char *nombreTipoVentana(int tipo) {
     }
 }
 
-/* Retorna el nombre del tipo de usuario */
+/* Retorna el nombre del tipo de usuario  - harcode*/
 const char *nombreUsuario(int tipo) {
     switch (tipo) {
         case USERT_PERS_ADMIN: 
@@ -128,7 +131,7 @@ const char *nombreUsuario(int tipo) {
     }
 }
 
-/* Setea los vectores de las frecuencias BoW a 0 (para otra oracion) */
+/* Setea los vectores de las frecuencias BoW a 0 (para otra oracion)  - harcode*/
 void resetVectoresEstadoOracion(EstadoClasificacionVentana *estado) {
     memset(estado->frecuencias_correo, 0, sizeof(estado->frecuencias_correo));
     memset(estado->frecuencias_articulo, 0, sizeof(estado->frecuencias_articulo));
@@ -136,7 +139,7 @@ void resetVectoresEstadoOracion(EstadoClasificacionVentana *estado) {
 }
 
 /* Verifica a que diccionario pertenece una palabra, y segun el diccionario
- aumenta la frecuencia de esa palabra en ese vector */
+ aumenta la frecuencia de esa palabra en ese vector  - harcode*/
 void agregarPalabraAlVector(EstadoClasificacionVentana *estado, const char *palabra) {
     for (int i = 0; i < NUM_PALABRAS_DICC; i++) {
         if (strcasecmp(palabra, correo_electronico[i]) == 0) estado->frecuencias_correo[i]++;
@@ -413,10 +416,33 @@ void *hiloVentana(void *param) {
 }
 
 void *hiloControl(void *param) {
-    //
+
 }
 
-int main(){
+int main(int argc, char *argv[]) {
+
+    if (argc != 4) {
+        fprintf(stderr, "Uso: %s <puerto> <diccionarios.conf> <reglas.conf>\n", argv[0]);
+        return 1;
+    }
+
+    int puerto = atoi(argv[1]);
+    if (puerto <= 0 || puerto > 65535) {
+        fprintf(stderr, "Puerto invalido: %s\n", argv[1]);
+        return 1;
+    }
+
+    ConfigIALearner config;
+    memset(&config, 0, sizeof(config));
+
+    // Primero parseamos los dicc luego las reglas de usuarios
+    if (parsearDiccionarios(argv[2], &config) != 0) return 1;
+    if (parsearReglas(argv[3], &config) != 0) {
+        liberarConfig(&config);
+        return 1;
+    }
+    imprimirConfig(&config); // muestra la config al arrancar, para veruficar nomas
+
     
     arrHilos = malloc (100 * sizeof(pthread_t)); // Tam inicial
     
@@ -430,7 +456,7 @@ int main(){
 
     socket_address.sin_family = AF_INET;
     socket_address.sin_addr.s_addr = INADDR_ANY; // Escucha en todas las interfaces de red
-    socket_address.sin_port = htons(PUERTO);
+    socket_address.sin_port = htons(puerto);
 
     // Remove any old socket and create an unnamed socket for the server.
     if ((server_sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -458,7 +484,7 @@ int main(){
         exit(EXIT_FAILURE);
     }
 
-    printf("Receptor listo, esperando mensajes en el puerto %d...\n", PUERTO);
+    printf("Receptor listo, esperando mensajes en el puerto %d...\n", puerto);
 
     /*
     int socket_control_fd = accept(server_sockfd, (struct sockaddr *)&client_address, (socklen_t*)&addrlen);
@@ -500,6 +526,7 @@ int main(){
     }
 
     close(server_sockfd);
+    liberarConfig(&config);
     return 0;
 
 }
