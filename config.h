@@ -20,7 +20,7 @@ typedef struct {
 
 /* Una regla de proporcion mínima de un TipoDocumento para un usuario */
 typedef struct {
-    int indice_tipo; // indice en ConfigIALearner.tipos[]
+    int indice_tipo; // TipoDoc, indice en ConfigIALearner.tipos[]
     double proporcion_min; // proporcion minima requerida para aportar (0.0 a 1.0)
 } CondicionUsuario;
 
@@ -57,9 +57,9 @@ int parsearDiccionarios(const char *ruta, ConfigIALearner *config);
  llena reglas[], delimitadores y umbral. Retorna 0 en exito, -1 en error. */
 int parsearReglas(const char *ruta, ConfigIALearner *config);
 
-/* Busca una palabra en la tabla hash (es case insensitive).
+/* Busca el tipo de Documento de una palabra en la tabla hash (es case insensitive).
  Retorna el indice_tipo si existe, -1 si no esta en ningun diccionario. */
-int indicePalabraEnHash(const char *palabra, ConfigIALearner *config);
+int indiceTipoPalabraEnHash(const char *palabra, ConfigIALearner *config);
 
 /* Libera toda la memoria dinamica de la configuracion */
 void liberarConfig(ConfigIALearner *config);

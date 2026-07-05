@@ -13,13 +13,16 @@
 #define TMSG_CIERRE 2  // ventana cerrada (Escape, X, Alt+F4, kill, etc.) 
 #define TMSG_BACKSPACE 3  // borrar ultimo caracter
 #define TMSG_FIN_ORACION 4  // Return: fin de oracion 
+
 #define TMSG_CALC_USER 10 // mensaje de control para que se calcule el tipo de usuario
+#define TMSG_RESULTADO_VENTANA 11  // mensaje hacia launcher, tipo doc de una ventana
 
 typedef struct {
     int tipo_mensaje;
     pid_t pid_ventana;
     int id_ventana; // ID local del launcher
+    int id_launcher;
     char tecla;
 } Mensaje;
 
-#endif /* PROTOCOLO_COMMS_H */
+#endif

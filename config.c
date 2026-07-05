@@ -14,20 +14,14 @@
 /* Elimina espacios y saltos de linea al inicio y final de un string. */
 static void trim(char *s) {
     char *inicio = s;
-    while (*inicio && isspace((unsigned char)*inicio)) {
-        inicio++;
-    }
+    while (*inicio && isspace((unsigned char)*inicio)) inicio++;
 
-    char *fin = inicio + strlen(inicio) - 1;
-    while (fin > inicio && isspace((unsigned char)*fin)) {
-        fin--;
-    }
-    *(fin + 1) = '\0';
+    char *fin = inicio + strlen(inicio);
+    while (fin > inicio && isspace((unsigned char)*(fin - 1))) fin--;
+    *fin = '\0';
 
     /* Si habia espacios a la izquierda mueve el puntero original*/
-    if (inicio != s) {
-        memmove(s, inicio, strlen(inicio) + 1);
-    }
+    if (inicio != s) memmove(s, inicio, fin - inicio + 1);
 }
 
 /* Convierte un string a minusculas */
@@ -64,7 +58,7 @@ static unsigned long hashFNV1a(const char *str, int tam_tabla) {
     int c;
     while ((c = *str++)) {
         hash ^= (unsigned long)tolower((unsigned char)c); // XOR primero
-        hash *= 16777619UL;                               // luego multiplica
+        hash *= 16777619UL; // luego multiplica
     }
     return hash % (unsigned long)tam_tabla;
 }
@@ -515,8 +509,7 @@ int parsearReglas(const char *ruta, ConfigIALearner *config) {
 }
 
 
-
-int indicePalabraEnHash(const char *palabra, ConfigIALearner *config) {
+int indiceTipoPalabraEnHash(const char *palabra, ConfigIALearner *config) {
     if (!palabra || !config->tabla_hash) return -1;
 
     unsigned long cubeta = hashFNV1a(palabra, config->tam_hash);
@@ -530,7 +523,6 @@ int indicePalabraEnHash(const char *palabra, ConfigIALearner *config) {
     }
     return -1;
 }
-
 
 
 void liberarConfig(ConfigIALearner *config) {
@@ -562,7 +554,6 @@ void liberarConfig(ConfigIALearner *config) {
         config->reglas = NULL;
     }
 }
-
 
 
 void imprimirConfig(const ConfigIALearner *config) {
