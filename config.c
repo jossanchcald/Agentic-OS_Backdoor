@@ -103,11 +103,12 @@ static int obtenerOCrearTipo(const char *nombre, ConfigIALearner *config) {
 
 /* Inserta una palabra en la tabla hash si tabla_hash != NULL. Retorna 0 en exito, -1 en error. */
 static int insertarEnHash(const char *palabra, int indice_tipo, ConfigIALearner *config) {
-    char *palabra_min = strdup(palabra);
-    if (!palabra_min) {
-        fprintf(stderr, "[config] Error strdup en insertarEnHash\n");
+    char *palabra_min = malloc(strlen(palabra) + 1);
+    if (palabra_min == NULL) {
+        fprintf(stderr, "[config] Error malloc\n");
         return -1;
     }
+    strcpy(palabra_min, palabra);
     aMinusculas(palabra_min);
 
     unsigned long cubeta = hashFNV1a(palabra_min, config->tam_hash);
