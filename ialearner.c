@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -188,9 +189,9 @@ int sumaVector(int *vector, int tam) {
 /* Clasifica la oracion actual segun los valores de los vectores y 
  actualiza el conteo de tipo de usuario */
 int clasificarOracion(EstadoClasificacionVentana *estado) {
-    int total_correo = sumarVector(estado->frecuencias_correo, NUM_PALABRAS_DICC);
-    int total_articulo = sumarVector(estado->frecuencias_articulo, NUM_PALABRAS_DICC);
-    int total_reporte = sumarVector(estado->frecuencias_reporte, NUM_PALABRAS_DICC);
+    int total_correo = sumaVector(estado->frecuencias_correo, NUM_PALABRAS_DICC);
+    int total_articulo = sumaVector(estado->frecuencias_articulo, NUM_PALABRAS_DICC);
+    int total_reporte = sumaVector(estado->frecuencias_reporte, NUM_PALABRAS_DICC);
 
     int categoria;
     if (total_correo >= total_articulo && total_correo >= total_reporte) {
@@ -208,16 +209,16 @@ int clasificarOracion(EstadoClasificacionVentana *estado) {
         estado->vec_total_articulo[i] += estado->frecuencias_articulo[i];
         estado->vec_total_reporte[i]  += estado->frecuencias_reporte[i];
     }
-    resetVectoresEstadOracion(estado); // limpiamos los vectores
+    resetVectoresEstadoOracion(estado); // limpiamos los vectores
     return categoria;
 }
 
 /* Clasifica la ventana segun los vectores de frecuencia de cada diccionario, 
  minimo 3 ocurrencias para clasificar, si mas de uno cumple gana el de mayor suma */
 int clasificarVentana(EstadoClasificacionVentana *estado) {
-    int fCorreo = sumarVector(estado->vec_total_correo,   NUM_PALABRAS_DICC);
-    int fArticulo = sumarVector(estado->vec_total_articulo, NUM_PALABRAS_DICC);
-    int fReporte = sumarVector(estado->vec_total_reporte,  NUM_PALABRAS_DICC);
+    int fCorreo = sumaVector(estado->vec_total_correo,   NUM_PALABRAS_DICC);
+    int fArticulo = sumaVector(estado->vec_total_articulo, NUM_PALABRAS_DICC);
+    int fReporte = sumaVector(estado->vec_total_reporte,  NUM_PALABRAS_DICC);
 
     int candCorreo = (fCorreo >= 3);
     int candArticulo = (fArticulo >= 3);
@@ -308,13 +309,13 @@ void *hiloVentana(void *param) {
 
             // Procesamos la ultima palabra/oracion pendiente antes de clasificar
             procesarPalabra(&estado);
-            int hayPendiente = sumarVector(estado.frecuencias_correo, NUM_PALABRAS_DICC) + sumarVector(estado.frecuencias_articulo, NUM_PALABRAS_DICC) + sumarVector(estado.frecuencias_reporte, NUM_PALABRAS_DICC);
+            int hayPendiente = sumaVector(estado.frecuencias_correo, NUM_PALABRAS_DICC) + sumaVector(estado.frecuencias_articulo, NUM_PALABRAS_DICC) + sumaVector(estado.frecuencias_reporte, NUM_PALABRAS_DICC);
             if (hayPendiente > 0) {
                 clasificarOracion(&estado);
             }
 
             int tipoDoc = clasificarVentana(&estado);
-            printf("Clasificacion final de la ventana: %s\n", pid_ventana_actual, nombreTipoDocumento(tipoDoc));
+            printf("Clasificacion final de la ventana: %s\n", nombreTipoVentana(tipoDoc));
 
             // Actualiza el contador global del lote
             pthread_mutex_lock(&mutex_resultados);
@@ -360,7 +361,7 @@ void *hiloVentana(void *param) {
         // TIPO MSG_FIN_ORACION: Return
         if (mensaje_recibido.tipo_mensaje == TMSG_FIN_ORACION) {
             // proc la ultima palabra/oracion que se tenia
-            procesarPalabraCompleta(&estado); 
+            procesarPalabra(&estado); 
             int categoria = clasificarOracion(&estado);
 
             int usuario = 0;
@@ -389,7 +390,7 @@ void *hiloVentana(void *param) {
         agregarLetraAHistorial(&estado, c);
 
         if (strchr(delimitadores, c) != NULL) {
-            procesarPalabraCompleta(&estado); // es delimitador
+            procesarPalabra(&estado); // es delimitador
         } else {
             if (estado.longitud_palabra + 1 < TAM_MAX_PALABRA) {
                 estado.palabra_actual[estado.longitud_palabra++] = c;
@@ -406,8 +407,8 @@ void *hiloVentana(void *param) {
     // Se cierra ventana, hacemos clasificacion final
 
     int tipoVentana = clasificarVentana(&estado);
-    printf("Texto completo: \"%s\"\n", pid_ventana_actual, estado.historial);
-    printf("Clasificacion final: %d\n", pid_ventana_actual, tipoVentana);
+    printf("Texto completo: \"%s\"\n", estado.historial);
+    printf("Clasificacion final: %d\n", tipoVentana);
 
     free(estado.historial);
     close(socket_fd);
@@ -445,6 +446,11 @@ int main(int argc, char *argv[]) {
 
     
     arrHilos = malloc (100 * sizeof(pthread_t)); // Tam inicial
+    if (!arrHilos) {
+        fprintf(stderr, "Error malloc launcher arrHilos");
+        return -1;
+    }
+    
     
     int server_sockfd, socket_hilo; //Descriptor de archivo del socket del que recibe los msj por cada ventana 1 hilo
 

@@ -1,13 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <ctype.h>
 #include "protocoloComms.h"
 
@@ -50,6 +49,7 @@ int parsearLauncherConf(const char *ruta, ConfigLauncher *cfg) {
 
         if (strncmp(lineaT, "IALEARNER_HOST ", 15) == 0) {
             strncpy(cfg->host, lineaT + 15, sizeof(cfg->host) - 1);
+            cfg->host[sizeof(cfg->host)-1] = '\0';
 
         } else if (strncmp(lineaT, "IALEARNER_PORT ", 15) == 0) {
             cfg->puerto = atoi(lineaT + 15);
