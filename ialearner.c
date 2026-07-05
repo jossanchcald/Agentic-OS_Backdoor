@@ -401,7 +401,7 @@ void *hiloVentana(void *param) {
             // no es una palabra que pertenezca a algun diccionario.
         }
 
-        printf("Caracter recibido: '%c'\n", pid_ventana_actual, c);
+        printf("[PID]: %d | Caracter recibido: '%c'\n", pid_ventana_actual, c);
     }
 
     // Se cierra ventana, hacemos clasificacion final
