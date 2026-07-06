@@ -1,5 +1,4 @@
-/* config.c - Estructuras y funciones de configuracion para IALearner 
- Autor: Josue Sanchez C.
+/* config.c - Estructuras y funciones de configuracion para IALearner
 */
 
 #include <stdio.h>
@@ -9,7 +8,7 @@
 #include <ctype.h>
 #include "config.h"
 
-/* Funciones internas */
+
 
 /* Elimina espacios y saltos de linea al inicio y final de un string. */
 static void trim(char *s) {
@@ -95,7 +94,26 @@ static int obtenerOCrearTipo(const char *nombre, ConfigIALearner *config) {
     return config->num_tipos++;
 }
 
-/* Inserta una palabra en la tabla hash si tabla_hash != NULL. Retorna 0 en exito, -1 en error. */
+/* Agrega indice_tipo a los tipos de una entrada existente, si no lo tenia ya.
+ Retorna 0 en exito (incluso si ya estaba), -1 si falla el realloc. */
+static int agregarTipoAEntrada(EntradaHash *entrada, int indice_tipo) {
+    for (int i = 0; i < entrada->num_indices; i++) {
+        if (entrada->indices_tipo[i] == indice_tipo) return 0; // ya pertenece a este tipo
+    }
+    if (entrada->num_indices >= entrada->cap_indices) {
+        int nueva_cap = entrada->cap_indices * 2;
+        int *tmp = realloc(entrada->indices_tipo, nueva_cap * sizeof(int));
+        if (!tmp) return -1;
+        entrada->indices_tipo = tmp;
+        entrada->cap_indices = nueva_cap;
+    }
+    entrada->indices_tipo[entrada->num_indices++] = indice_tipo;
+    return 0;
+}
+
+/* Inserta una palabra en la tabla hash. Si la palabra ya existe (de otro
+ dicc con distinto tipo, o repetida), se le agrega el nuevo tipo.
+ Retorna 0 en exito, -1 en error. */
 static int insertarEnHash(const char *palabra, int indice_tipo, ConfigIALearner *config) {
     char *palabra_min = malloc(strlen(palabra) + 1);
     if (palabra_min == NULL) {
@@ -110,29 +128,41 @@ static int insertarEnHash(const char *palabra, int indice_tipo, ConfigIALearner 
     EntradaHash *actual = config->tabla_hash[cubeta];
     while (actual) {
         if (strcmp(actual->palabra, palabra_min) == 0) {
-            if (actual->indice_tipo != indice_tipo) {
-                fprintf(stderr, "[config] Aviso: la palabra '%s' ya pertenece al tipo '%s', se ignora su redefinicion en el tipo '%s'\n", palabra_min, config->tipos[actual->indice_tipo].nombre, config->tipos[indice_tipo].nombre);
-            }
+            // La palabra ya existe, le sumamos este tipo, o no si ya lo tenia
+            int r = agregarTipoAEntrada(actual, indice_tipo);
             free(palabra_min);
+            if (r < 0) {
+                fprintf(stderr, "[config] Error realloc indices_tipo para '%s'\n", actual->palabra);
+                return -1;
+            }
             return 0;
         }
         actual = actual->siguiente;
     }
 
+    // No existe, se crea una entrada nueva con este primer tipo
     EntradaHash *nueva = malloc(sizeof(EntradaHash));
     if (!nueva) {
         fprintf(stderr, "[config] Error malloc EntradaHash\n");
         free(palabra_min);
         return -1;
     }
+    nueva->cap_indices = 2;
+    nueva->indices_tipo = malloc(nueva->cap_indices * sizeof(int));
+    if (!nueva->indices_tipo) {
+        fprintf(stderr, "[config] Error malloc indices_tipo\n");
+        free(palabra_min);
+        free(nueva);
+        return -1;
+    }
+    nueva->indices_tipo[0] = indice_tipo;
+    nueva->num_indices = 1;
     nueva->palabra = palabra_min;
-    nueva->indice_tipo = indice_tipo;
     nueva->siguiente = config->tabla_hash[cubeta];
     config->tabla_hash[cubeta] = nueva;
 
     return 0;
 }
-
 
 int parsearDiccionarios(const char *ruta, ConfigIALearner *config) {
     FILE *f = fopen(ruta, "r");
@@ -507,31 +537,37 @@ int parsearReglas(const char *ruta, ConfigIALearner *config) {
     return 0;
 }
 
-
-int indiceTipoPalabraEnHash(const char *palabra, ConfigIALearner *config) {
-    if (!palabra || !config->tabla_hash) return -1;
+int aplicarPalabraAFrecuencias(const char *palabra, ConfigIALearner *config, int *frecuencias, int num_tipos) {
+    if (!palabra || !config->tabla_hash) return 0;
 
     unsigned long cubeta = hashFNV1a(palabra, config->tam_hash);
     EntradaHash *actual = config->tabla_hash[cubeta];
 
     while (actual) {
         if (strcasecmp(actual->palabra, palabra) == 0) {
-            return actual->indice_tipo;
+            int coincidencias = 0;
+            for (int i = 0; i < actual->num_indices; i++) {
+                int idx = actual->indices_tipo[i];
+                if (idx >= 0 && idx < num_tipos) {
+                    frecuencias[idx]++;
+                    coincidencias++;
+                }
+            }
+            return coincidencias;
         }
         actual = actual->siguiente;
     }
-    return -1;
+    return 0; // la palabra no esta en ningun diccionario
 }
 
-
 void liberarConfig(ConfigIALearner *config) {
-    // Liberamos la tabla hash
     if (config->tabla_hash) {
         for (int i = 0; i < config->tam_hash; i++) {
             EntradaHash *actual = config->tabla_hash[i];
             while (actual) {
                 EntradaHash *siguiente = actual->siguiente;
                 free(actual->palabra);
+                free(actual->indices_tipo);
                 free(actual);
                 actual = siguiente;
             }
@@ -540,11 +576,9 @@ void liberarConfig(ConfigIALearner *config) {
         config->tabla_hash = NULL;
     }
 
-    // Liberamos el array dinamico de tipos
     free(config->tipos);
     config->tipos = NULL;
 
-    // Liberamos el array dinamico de reglas de usuarios
     if (config->reglas) {
         for (int i = 0; i < config->num_reglas; i++) {
             free(config->reglas[i].condiciones);
@@ -553,7 +587,6 @@ void liberarConfig(ConfigIALearner *config) {
         config->reglas = NULL;
     }
 }
-
 
 void imprimirConfig(const ConfigIALearner *config) {
     printf("/////////////////// Configuracion cargada ///////////////////\n");

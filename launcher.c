@@ -1,6 +1,5 @@
 /* launcher.c
  Proceso launcher: crea y monitorea ventanas graficas, se comunica con IALearner via Sockets.
- Autor: Josue Sanchez C.
 */
 
 #include <stdio.h>

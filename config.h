@@ -1,15 +1,18 @@
 /* config.h - Estructuras y funciones de configuracion para IALearner 
- Autor: Josue Sanchez C.
 */
 
 #ifndef CONFIG_H
 #define CONFIG_H
 
-/* Una entrada en la tabla hash, osea una palabra (usa chaining para colisiones) */
+/* Una entrada en la tabla hash, osea una palabra (usa chaining para colisiones)
+ una palabra puede pertenecer a VARIOS tipos de documento a la vez, por eso se guarda
+ un arreglo dinamico de indices en vez de uno solo. */
 typedef struct EntradaHash {
     char *palabra;
-    int indice_tipo; // TipoDocumento
-    struct EntradaHash *siguiente; // Siguiente si hubo colision
+    int *indices_tipo;    // arreglo dinamico: a que TipoDocumento(s) pertenece
+    int num_indices;
+    int cap_indices;
+    struct EntradaHash *siguiente; // siguiente si hubo colision de hash
 } EntradaHash;
 
 /* Un tipo de documento (CORREO, ARTICULO, REPORTE, o los que defina el servidor) */
@@ -57,9 +60,11 @@ int parsearDiccionarios(const char *ruta, ConfigIALearner *config);
  llena reglas[], delimitadores y umbral. Retorna 0 en exito, -1 en error. */
 int parsearReglas(const char *ruta, ConfigIALearner *config);
 
-/* Busca el tipo de Documento de una palabra en la tabla hash (es case insensitive).
- Retorna el indice_tipo si existe, -1 si no esta en ningun diccionario. */
-int indiceTipoPalabraEnHash(const char *palabra, ConfigIALearner *config);
+/* Busca una palabra en la tabla hash (case-insensitive) y aumenta en 1 la
+ frecuencia en el arreglo de las frencuencias[] por cada tipo de dicc al que pertenezca,
+ frecuencias[] debe tener capacidad num_tipos.
+ Retorna a cuantos tipos pertenece (0 si la palabra no esta en ningun diccionario). */
+int aplicarPalabraAFrecuencias(const char *palabra, ConfigIALearner *config, int *frecuencias, int num_tipos);
 
 /* Libera toda la memoria dinamica de la configuracion */
 void liberarConfig(ConfigIALearner *config);

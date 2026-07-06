@@ -1,7 +1,6 @@
 /* ialearner.c
  Proceso receptor/clasificador: recibe teclas de las ventanas graficas,
  aplica Bag of Words para clasificar documentos e inferir tipo de usuario.
- Autor: Josue Sanchez C.
 */
 
 #include <stdio.h>
@@ -85,15 +84,10 @@ static void expandirArregloHilos(){
     arrHilos = tmp;
 }
 
-/* Verifica a que diccionario pertenece una palabra, y segun el tipo
- aumenta la frecuencia de ese tipo en el vector global */
+/* Busca a que tipos pertenece una palabra y aumenta la frecuencia de la
+ oracion actual para cada uno */
 static void agregarPalabraAlVector(EstadoClasificacionVentana *estado, const char *palabra, ConfigIALearner *config) {
-    int idx_tipo = indiceTipoPalabraEnHash(palabra, config);
-
-    if (idx_tipo >= 0 && idx_tipo < estado->num_tipos) {
-        estado->frecuencias_oracion[idx_tipo]++;
-    }
-    // si retorna -1, la palabra no está en ningún diccionario, se ignora
+    aplicarPalabraAFrecuencias(palabra, config, estado->frecuencias_oracion, estado->num_tipos);
 }
 
 /* Agrega un caracter al historial completo, aumentando el buffer si hace falta
