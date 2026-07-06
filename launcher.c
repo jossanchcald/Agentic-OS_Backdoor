@@ -305,7 +305,6 @@ static InfoVentana *buscarPorPid(pid_t pid) {
 void *hiloMonitor(void *arg) {
     (void)arg;
 
-   // Configuramos el conjunto de señales que el hilo espera, SIGCHLD
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, SIGCHLD);
@@ -313,41 +312,32 @@ void *hiloMonitor(void *arg) {
     int sig_recibida;
 
     while (launcher_corriendo) {
-        // sigwait() suspende el hilo de forma segura. 
-        // Cuando llega SIGCHLD, recibe la señal y despierta.
         int error = sigwait(&set, &sig_recibida);
         if (error != 0) continue;
 
-        // Verificación de salida
         if (!launcher_corriendo) break;
 
         pthread_mutex_lock(&mutex_ventanas);
         int ventanas_activas = num_activas;
-        pthread_mutex_unlock(&mutex_ventanas);
-
         int habia_activas = (ventanas_activas > 0);
 
-        /* Recogemos todos los hijos que hayan terminado */
         int status;
         pid_t pid;
         while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-
-            pthread_mutex_lock(&mutex_ventanas);
             InfoVentana *v = buscarPorPid(pid);
-
             if (v) {
                 v->estado = VENTANA_CERRADA;
                 printf("\n[hiloMonitor] Ventana #%d (PID %d) terminada.\n", v->id_local, (int)pid);
-
                 num_activas--;
                 ventanas_activas--;
                 fflush(stdout);
+            } else {
+                fprintf(stderr, "\n[hiloMonitor] Aviso: PID %d termino pero no esta registrado\n", (int)pid);
             }
-            pthread_mutex_unlock(&mutex_ventanas);
         }
 
-        /* Si habia ventanas activas y ahora no queda ninguna,
-           avisamos a ialearner que calcule el tipo de usuario */
+        pthread_mutex_unlock(&mutex_ventanas);
+
         if (habia_activas && ventanas_activas == 0 && socket_control >= 0) {
             Mensaje msg;
             memset(&msg, 0, sizeof(msg));

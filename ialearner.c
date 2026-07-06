@@ -20,6 +20,8 @@
 #include "protocoloComms.h"
 #include "config.h"
 
+
+
 pthread_t *arrHilos = NULL; // Array para almacenar los identificadores de los hilos
 size_t totalHilos = 0; // Tamaño real del arreglo de ids de hilos
 size_t capacidadArrHilos = 16; // El espacio reservado para el arreglo de ids de hilos
@@ -62,6 +64,8 @@ typedef struct {
     size_t longitud_historial;
     size_t capacidad_historial;
 } EstadoClasificacionVentana; // El estado actual de clasificacion de la ventana, todo lo que se ha preisonado, y la palabra y oracion actual q se tiene
+
+
 
 /* Suma los elementos de un vector */
 static int sumaVector(int *vector, int tam) {
