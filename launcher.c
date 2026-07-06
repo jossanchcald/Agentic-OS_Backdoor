@@ -58,9 +58,6 @@ int socket_control = -1; // Socket para hiloMonitor
 int launcher_corriendo = 1;
 
 static ConfigConexionLauncher cfg_global;
-    (void)sig;
-    hay_hijo_terminado = 1; // solo seteamos el flag, nada mas en el handler
-}
 
 /* Elimina espacios y saltos de linea al inicio y final de un string. */
 static void trim(char *s) {
