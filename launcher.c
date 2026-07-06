@@ -266,8 +266,6 @@ int createWindow(int socket_fd, int id_launcher, int id_ventana) {
 
 /* Agrega una ventana al array. Retorna su indice o -1 si falla malloc. */
 static int agregarVentana(pid_t pid, int id_local) {
-    
-    pthread_mutex_lock(&mutex_ventanas);
     if (num_ventanas >= cap_ventanas) {
         int nueva_cap = cap_ventanas * 2;
         InfoVentana *tmp = realloc(ventanas, nueva_cap * sizeof(InfoVentana));
@@ -285,12 +283,8 @@ static int agregarVentana(pid_t pid, int id_local) {
     strncpy(ventanas[num_ventanas].tipo_documento, "Sin clasificar", sizeof(ventanas[num_ventanas].tipo_documento) - 1);
     ventanas[num_ventanas].tipo_documento[sizeof(ventanas[num_ventanas].tipo_documento) - 1] = '\0';
     num_activas++;
-    int idx = num_ventanas++;
-    pthread_mutex_unlock(&mutex_ventanas);
-
-    return idx;
+    return num_ventanas++;
 }
-
 /* Busca una ventana por ID local. Retorna puntero o NULL. - O(n)*/
 static InfoVentana *buscarPorId(int id) {
     int idx = id - 1; // los IDs empiezan en 1, los indices en 0
@@ -408,9 +402,12 @@ static void comandoCrear(int n) {
     for (int i = 0; i < n; i++) {
         int id_local = siguiente_id++;
 
+        pthread_mutex_lock(&mutex_ventanas);
+
         pid_t pid = fork();
         if (pid < 0) {
             perror("  [launcher] Error en fork");
+            pthread_mutex_unlock(&mutex_ventanas);
             continue;
         }
 
@@ -425,7 +422,10 @@ static void comandoCrear(int n) {
             exit(ret);
         }
 
-        if (agregarVentana(pid, id_local) < 0) {
+        int idx = agregarVentana(pid, id_local);
+        pthread_mutex_unlock(&mutex_ventanas);
+
+        if (idx < 0) {
             fprintf(stderr, "  [launcher] Error registrando ventana, matando proceso hijo\n");
             kill(pid, SIGKILL);
             continue;
