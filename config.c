@@ -540,11 +540,16 @@ int parsearReglas(const char *ruta, ConfigIALearner *config) {
 int aplicarPalabraAFrecuencias(const char *palabra, ConfigIALearner *config, int *frecuencias, int num_tipos) {
     if (!palabra || !config->tabla_hash) return 0;
 
-    unsigned long cubeta = hashFNV1a(palabra, config->tam_hash);
+    char buf[256];
+    strncpy(buf, palabra, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    for (int i = 0; buf[i]; i++) buf[i] = tolower((unsigned char)buf[i]);
+
+    unsigned long cubeta = hashFNV1a(buf, config->tam_hash);
     EntradaHash *actual = config->tabla_hash[cubeta];
 
     while (actual) {
-        if (strcasecmp(actual->palabra, palabra) == 0) {
+        if (strcmp(actual->palabra, buf) == 0) {
             int coincidencias = 0;
             for (int i = 0; i < actual->num_indices; i++) {
                 int idx = actual->indices_tipo[i];
@@ -557,9 +562,8 @@ int aplicarPalabraAFrecuencias(const char *palabra, ConfigIALearner *config, int
         }
         actual = actual->siguiente;
     }
-    return 0; // la palabra no esta en ningun diccionario
+    return 0;
 }
-
 void liberarConfig(ConfigIALearner *config) {
     if (config->tabla_hash) {
         for (int i = 0; i < config->tam_hash; i++) {

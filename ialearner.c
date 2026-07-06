@@ -26,7 +26,7 @@ size_t totalHilos = 0; // Tamaño real del arreglo de ids de hilos
 size_t capacidadArrHilos = 16; // El espacio reservado para el arreglo de ids de hilos
 
 /* Una sesion representa un launcher conectado, con su propio conteo de tipos de ventana.
- asi se pueden conectar muchos launches a ialearner */
+ asi se pueden conectar muchos launchers a ialearner */
 typedef struct {
     int id_launcher;
     int socket_control;
@@ -51,7 +51,7 @@ typedef struct {
     size_t longitud_palabra;
 
     // Frencuencias BoW de la oracion actual
-    int *frecuencias_oracion; // array dinamico para los tipos de documento
+    int *frecuencias_oracion; // dinámico
     
     // Frecuencias BoW de toda la ventana
     int *vec_total; // array dinamico acumulado de toda la ventana
@@ -248,32 +248,47 @@ static SesionLauncher *buscarSesion(int id_launcher) {
 }
 
 /* Imprime el resultado de inferencia de usuario (compartido por hilo ventana e hilo control) */
-static void imprimirInferenciaUsuario(SesionLauncher *sesion, ConfigIALearner *config, const char *prefijo) {
+static void imprimirInferenciaUsuario(SesionLauncher *sesion, ConfigIALearner *config, int es_resultado_final) {
     pthread_mutex_lock(&sesion->mutex);
 
     int total = 0;
     for (int i = 0; i < config->num_tipos; i++) total += sesion->contadores_tipos[i];
 
-    printf("%s[launcher PID %d] === Estado actual de clasificacion ===\n", prefijo, sesion->id_launcher);
+    if (es_resultado_final) {
+        printf("\n");
+        printf("  ╔══ RESULTADO FINAL — Launcher PID %d ══╗\n", sesion->id_launcher);
+    } else {
+        printf("\n  ┌── Progreso (Launcher PID %d) ─────────\n", sesion->id_launcher);
+    }
+
+    printf("  │  Ventanas clasificadas: %d\n", total);
     for (int i = 0; i < config->num_tipos; i++) {
-        printf("%s  %s: %d ventanas\n", prefijo, config->tipos[i].nombre, sesion->contadores_tipos[i]);
+        double prop = total > 0 ? (double)sesion->contadores_tipos[i] / total * 100.0 : 0.0;
+        printf("  │    %-20s %2d ventanas (%.0f%%)\n", config->tipos[i].nombre, sesion->contadores_tipos[i], prop);
     }
 
     int usuarios[32];
     int num_aplicables = 0;
     inferirTipoUsuario(sesion->contadores_tipos, config->num_tipos, total, config, usuarios, &num_aplicables);
 
+    printf("  │\n");
     if (num_aplicables == 0) {
-        printf("%s  Tipo de usuario: Indeterminado (datos insuficientes)\n", prefijo);
+        printf("  │  Tipo de usuario: Indeterminado\n");
+        printf("  │  (se necesitan mas ventanas cerradas)\n");
     } else if (num_aplicables == 1) {
-        printf("%s  Tipo de usuario: %s\n", prefijo, config->reglas[usuarios[0]].nombre);
+        printf("  │  Tipo de usuario: %s\n", config->reglas[usuarios[0]].nombre);
     } else {
-        printf("%s  Sistema indeciso. Tipos posibles: ", prefijo);
+        printf("  │  Sistema indeciso entre:\n");
         for (int i = 0; i < num_aplicables; i++) {
-            printf("%s%s", config->reglas[usuarios[i]].nombre, i < num_aplicables - 1 ? " / " : "\n");
+            printf("  │    - %s\n", config->reglas[usuarios[i]].nombre);
         }
     }
-    printf("%s=====================================\n", prefijo);
+
+    if (es_resultado_final) {
+        printf("  ╚═══════════════════════════════════════╝\n\n");
+    } else {
+        printf("  └───────────────────────────────────────\n\n");
+    }
 
     pthread_mutex_unlock(&sesion->mutex);
 }
@@ -358,7 +373,7 @@ static void trabajoVentana(int socket_fd, Mensaje *saludo, ConfigIALearner *conf
                 printf("[Ventana #%d] Actualmente tipo Desconocido.\n", id_ventana);
             }
 
-            imprimirInferenciaUsuario(sesion, config, "  [progreso] ");
+            imprimirInferenciaUsuario(sesion, config, 00);
             agregarLetraAHistorial(&estado, '\n');
             continue;
         }
@@ -433,7 +448,7 @@ static void trabajoControl(int socket_fd, int id_launcher, ConfigIALearner *conf
         }
         if (msg.tipo_mensaje == TMSG_CALC_USER) {
             printf("\n[trabajoControl] Launcher PID %d solicita resultado final del lote.\n", id_launcher);
-            imprimirInferenciaUsuario(sesion, config, "[RESULTADO] ");
+            imprimirInferenciaUsuario(sesion, config, 1);
 
             pthread_mutex_lock(&sesion->mutex);
             memset(sesion->contadores_tipos, 0, config->num_tipos * sizeof(int));

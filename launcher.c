@@ -384,19 +384,16 @@ void *hiloReceptorControl(void *arg) {
 /* Crea n ventanas nuevas */
 static void comandoCrear(int n) {
     if (n <= 0) {
-        printf("  [launcher] Numero de ventanas invalido: debe ser > 0\n");
+        printf("  Numero de ventanas invalido: debe ser > 0\n");
         return;
     }
 
     for (int i = 0; i < n; i++) {
         int id_local = siguiente_id++;
 
-        pthread_mutex_lock(&mutex_ventanas);
-
         pid_t pid = fork();
         if (pid < 0) {
             perror("  [launcher] Error en fork");
-            pthread_mutex_unlock(&mutex_ventanas);
             continue;
         }
 
@@ -411,18 +408,18 @@ static void comandoCrear(int n) {
             exit(ret);
         }
 
+        pthread_mutex_lock(&mutex_ventanas);
         int idx = agregarVentana(pid, id_local);
         pthread_mutex_unlock(&mutex_ventanas);
 
         if (idx < 0) {
-            fprintf(stderr, "  [launcher] Error registrando ventana, matando proceso hijo\n");
+            fprintf(stderr, "  [launcher] Error registrando ventana\n");
             kill(pid, SIGKILL);
             continue;
         }
         printf("  Ventana #%d creada (PID %d)\n", id_local, (int)pid);
     }
 }
-
 /* Muestra el estado de todas las ventanas que hayan sido creadas*/
 static void comandoEstado(void) {
     pthread_mutex_lock(&mutex_ventanas);
@@ -434,7 +431,7 @@ static void comandoEstado(void) {
     }
     pthread_mutex_unlock(&mutex_ventanas);
 
-    printf("  %-6s %-10s %-12s %s\n", "ID", "PID", "Estado", "Tipo doc.");
+    printf("\n  %-6s %-10s %-12s %s\n", "ID", "PID", "Estado", "Tipo doc.");
     printf("  %-6s %-10s %-12s %s\n", "------", "----------", "------------", "---------");
 
     pthread_mutex_lock(&mutex_ventanas);
@@ -447,7 +444,6 @@ static void comandoEstado(void) {
             estado_str = "Cerrada";
         }
         
-        const char *tipo_str;
         printf("  %-6d %-10d %-12s %s\n", ventanas[i].id_local, (int)ventanas[i].pid, estado_str, ventanas[i].tipo_documento); // directamente el nombre
     }
     pthread_mutex_unlock(&mutex_ventanas);
