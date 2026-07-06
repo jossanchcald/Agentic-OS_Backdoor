@@ -506,7 +506,7 @@ static void comandoCerrarTodas(void) {
 
     pthread_mutex_lock(&mutex_ventanas);
     if (num_activas <= 0) {
-        printf("  No existen ventanas activas.");
+        printf("  No existen ventanas activas.\n");
         pthread_mutex_unlock(&mutex_ventanas);
         return;
     }

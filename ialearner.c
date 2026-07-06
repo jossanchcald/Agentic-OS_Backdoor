@@ -478,7 +478,7 @@ void *hiloConexion(void *param) {
 int main(int argc, char *argv[]) {
 
     if (argc != 4) {
-        fprintf(stderr, "Uso: %s <puerto> <diccionarios.conf> <reglas.conf>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <puerto> <archivo_conf_diccionarios> <archivo_conf_reglas> (Archivos de configuracion .conf)\n", argv[0]);
         return 1;
     }
 

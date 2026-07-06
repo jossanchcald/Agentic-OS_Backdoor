@@ -107,21 +107,21 @@ static int insertarEnHash(const char *palabra, int indice_tipo, ConfigIALearner 
 
     unsigned long cubeta = hashFNV1a(palabra_min, config->tam_hash);
 
-    // Chaining: se recorre la lista para evitar duplicados
     EntradaHash *actual = config->tabla_hash[cubeta];
     while (actual) {
         if (strcmp(actual->palabra, palabra_min) == 0) {
-            // Ya existe, no duplicamos
+            if (actual->indice_tipo != indice_tipo) {
+                fprintf(stderr, "[config] Aviso: la palabra '%s' ya pertenece al tipo '%s', se ignora su redefinicion en el tipo '%s'\n", palabra_min, config->tipos[actual->indice_tipo].nombre, config->tipos[indice_tipo].nombre);
+            }
             free(palabra_min);
             return 0;
         }
         actual = actual->siguiente;
     }
 
-    // No existe, insertamos al frente de la cadena
     EntradaHash *nueva = malloc(sizeof(EntradaHash));
     if (!nueva) {
-        fprintf(stderr, "[config]Error malloc EntradaHash\n");
+        fprintf(stderr, "[config] Error malloc EntradaHash\n");
         free(palabra_min);
         return -1;
     }
@@ -132,7 +132,6 @@ static int insertarEnHash(const char *palabra, int indice_tipo, ConfigIALearner 
 
     return 0;
 }
-
 
 
 int parsearDiccionarios(const char *ruta, ConfigIALearner *config) {
@@ -319,7 +318,7 @@ int parsearReglas(const char *ruta, ConfigIALearner *config) {
     }
 
     // Valores por defecto por si no se definen en el archivo
-    strncpy(config->delimitadores, " ,./|:;'\t", sizeof(config->delimitadores) - 1);
+    strncpy(config->delimitadores, " ,./|:;'", sizeof(config->delimitadores) - 1);
     config->umbral_ocurrencias = 3;
 
     char linea[256];
@@ -340,7 +339,7 @@ int parsearReglas(const char *ruta, ConfigIALearner *config) {
                 return -1;
             }
 
-            // Los delimitadores deben ir dentro de comillas " ,./|:;'\t"
+            // Los delimitadores deben ir dentro de comillas " ,./|:;'"
             char *inicio = strchr(linea + 14, '"'); // Primera aparicion de "
             char *fin = NULL;
             if (inicio) {
@@ -557,7 +556,7 @@ void liberarConfig(ConfigIALearner *config) {
 
 
 void imprimirConfig(const ConfigIALearner *config) {
-    printf("=== Configuracion cargada ===\n");
+    printf("/////////////////// Configuracion cargada ///////////////////\n");
     printf("Tipos de documento: %d\n", config->num_tipos);
     for (int i = 0; i < config->num_tipos; i++) {
         printf("  [%d] %s (%d palabras)\n", i, config->tipos[i].nombre, config->tipos[i].num_palabras);
@@ -573,5 +572,5 @@ void imprimirConfig(const ConfigIALearner *config) {
             printf("    %s >= %.0f%%\n", config->tipos[idx].nombre, config->reglas[i].condiciones[j].proporcion_min * 100);
         }
     }
-    printf("=============================\n");
+    printf("/////////////////////////////////////////////////////////\n");
 }
