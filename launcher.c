@@ -572,7 +572,7 @@ static void bucleComandos(void) {
 
 int main(void) {
 
-    if (parsearLauncherConf("launcher.conf", &cfg_global) != 0) {
+    if (parsearLauncherConf("./config/launcher.conf", &cfg_global) != 0) {
         return 1;
     }
 
