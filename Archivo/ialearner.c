@@ -613,7 +613,7 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        pthread_t vActual;
+        pthread_t *vActual = malloc(sizeof(pthread_t));
 
         ArgsConexion *args = malloc(sizeof(ArgsConexion));
         if (!args) {
