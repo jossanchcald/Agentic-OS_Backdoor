@@ -670,12 +670,12 @@ int main(void) {
     bucleComandos();
 
     launcher_corriendo = 0;
-    
+
+    comandoCerrarTodas();
+
     // Para despertar al hiloMonitor si se queda atrapado en sigwait() durante el cierre,
     // le enviamos un SIGCHLD artificial nosotros mismos.
     pthread_kill(hilo_monitor, SIGCHLD);
-
-    comandoCerrarTodas();
     pthread_join(hilo_monitor, NULL);
 
     close(socket_control);

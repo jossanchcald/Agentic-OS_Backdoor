@@ -21,10 +21,6 @@
 
 
 
-pthread_t *arrHilos = NULL; // Array para almacenar los identificadores de los hilos
-size_t totalHilos = 0; // Tamaño real del arreglo de ids de hilos
-size_t capacidadArrHilos = 16; // El espacio reservado para el arreglo de ids de hilos
-
 /* Una sesion representa un launcher conectado, con su propio conteo de tipos de ventana.
  asi se pueden conectar muchos launchers a ialearner */
 typedef struct {
@@ -71,17 +67,6 @@ static int sumaVector(int *vector, int tam) {
     int suma = 0;
     for (int i = 0; i < tam; i++) suma += vector[i];
     return suma;
-}
-
-/* Duplica la capacidad del arreglo de hilos*/
-static void expandirArregloHilos(){
-    capacidadArrHilos *= 2;
-    pthread_t *tmp = realloc(arrHilos, capacidadArrHilos * sizeof(pthread_t));
-    if (!tmp) {
-        fprintf(stderr, "[ialearner] Error realloc arrHilos\n");
-        exit(EXIT_FAILURE);
-    }
-    arrHilos = tmp;
 }
 
 /* Duplica la capacidad del arreglo de sesiones*/
@@ -470,8 +455,7 @@ static void trabajoControl(int socket_fd, int id_launcher, ConfigIALearner *conf
             break;
         }
         if (msg.tipo_mensaje == TMSG_CALC_USER) {
-            printf("\n[trabajoControl] Launcher PID %d solicita resultado final del lote.\n",
-                id_launcher);
+            printf("\n[trabajoControl] Launcher PID %d solicita resultado final del lote.\n", id_launcher);
             imprimirInferenciaUsuario(sesion, config, 1);
 
             pthread_mutex_lock(&sesion->mutex);
@@ -481,21 +465,18 @@ static void trabajoControl(int socket_fd, int id_launcher, ConfigIALearner *conf
 
             int usuarios[32];
             int num_aplicables = 0;
-            inferirTipoUsuario(sesion->contadores_tipos, config->num_tipos,
-                            total, config, usuarios, &num_aplicables);
+            inferirTipoUsuario(sesion->contadores_tipos, config->num_tipos, total, config, usuarios, &num_aplicables);
 
-            /* Armamos el string del contexto */
+            // Contexto
             char contexto[64];
             if (num_aplicables == 0) {
                 strncpy(contexto, "Indeterminado", sizeof(contexto) - 1);
             } else if (num_aplicables == 1) {
                 strncpy(contexto, config->reglas[usuarios[0]].nombre, sizeof(contexto) - 1);
             } else {
-                /* Si hay varios posibles, los concatenamos separados por " / " */
                 contexto[0] = '\0';
                 for (int i = 0; i < num_aplicables; i++) {
-                    strncat(contexto, config->reglas[usuarios[i]].nombre,
-                            sizeof(contexto) - strlen(contexto) - 1);
+                    strncat(contexto, config->reglas[usuarios[i]].nombre, sizeof(contexto) - strlen(contexto) - 1);
                     if (i < num_aplicables - 1)
                         strncat(contexto, " / ", sizeof(contexto) - strlen(contexto) - 1);
                 }
@@ -576,18 +557,9 @@ int main(int argc, char *argv[]) {
     }
     imprimirConfig(&config); // muestra la config al arrancar, para veruficar
 
-    
-    arrHilos = malloc(capacidadArrHilos * sizeof(pthread_t)); // Tam inicial
-    if (!arrHilos) {
-        fprintf(stderr, "[ialearner] Error malloc arrHilos\n");
-        liberarConfig(&config);
-        return 1;
-    }
-
     sesiones = malloc(cap_sesiones * sizeof(SesionLauncher *));
     if (!sesiones) {
         fprintf(stderr, "[ialearner] Error malloc sesiones\n");
-        free(arrHilos);
         liberarConfig(&config);
         return 1;
     }
@@ -642,9 +614,7 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        if (totalHilos >= capacidadArrHilos) {
-            expandirArregloHilos();
-        }
+        pthread_t *vActual = malloc(sizeof(pthread_t));
 
         ArgsConexion *args = malloc(sizeof(ArgsConexion));
         if (!args) {
@@ -655,19 +625,17 @@ int main(int argc, char *argv[]) {
         args->socket_fd = socket_entrante;
         args->config = &config;
 
-        if (pthread_create(&arrHilos[totalHilos], NULL, hiloConexion, args) != 0) {
+        if (pthread_create(&vActual, NULL, hiloConexion, args) != 0) {
             perror("[ialearner] pthread_create (conexion)");
             free(args);
             close(socket_entrante);
             continue;
         }
 
-        pthread_detach(arrHilos[totalHilos]);
-        totalHilos++;
+        pthread_detach(vActual);
     }
 
     if(server_sockfd >= 0) close(server_sockfd);
-    free(arrHilos);
     free(sesiones);
     liberarConfig(&config);
     return 0;
@@ -675,7 +643,6 @@ int main(int argc, char *argv[]) {
 
     limpiezaFinalError:
     if(server_sockfd >= 0) close(server_sockfd);
-    free(arrHilos);
     free(sesiones);
     liberarConfig(&config);
     return -1;
