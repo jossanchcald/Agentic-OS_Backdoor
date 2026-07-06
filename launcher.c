@@ -59,6 +59,8 @@ int launcher_corriendo = 1;
 
 static ConfigConexionLauncher cfg_global;
 
+
+
 /* Elimina espacios y saltos de linea al inicio y final de un string. */
 static void trim(char *s) {
     char *inicio = s;
@@ -331,11 +333,10 @@ void *hiloMonitor(void *arg) {
 
             if (v) {
                 v->estado = VENTANA_CERRADA;
-                printf("\n[monitor] Ventana #%d (PID %d) terminada.\n", v->id_local, (int)pid);
+                printf("\n[hiloMonitor] Ventana #%d (PID %d) terminada.\n", v->id_local, (int)pid);
 
                 num_activas--;
                 ventanas_activas--;
-                printf("launcher> ");
                 fflush(stdout);
             }
             pthread_mutex_unlock(&mutex_ventanas);
@@ -354,6 +355,8 @@ void *hiloMonitor(void *arg) {
                 printf("\n[hiloMonitor] Todas las ventanas cerradas. Resultado enviado a IALearner.\n");
             }
         }
+
+        printf("launcher> ");
     }
     return NULL;
 }
@@ -469,6 +472,13 @@ static int comandoCerrarPid(pid_t pid) {
 }
 
 static void comandoCerrarTodas(void) {
+
+    pthread_mutex_lock(&mutex_ventanas);
+    if (num_activas <= 0) {
+        printf("  No existen ventanas activas.");
+        return;
+    }
+    pthread_mutex_unlock(&mutex_ventanas);
     
     int enviadas = 0;
     pthread_mutex_lock(&mutex_ventanas);

@@ -262,11 +262,16 @@ void *hiloVentana(void *param) {
             if (bytes_leidos < 0) {
                 perror("[hiloVentana] recv");
             }
-            printf("[Ventana #%d PID %d] Conexion cerrada abruptamente — definiendo clasificacion final...\n", id_ventana, (int)pid_ventana);
+            printf("[Ventana #%d PID %d] Conexion cerrada abruptamente — obteniendo clasificacion final...\n", id_ventana, (int)pid_ventana);
 
             // Clasificamos final
             procesarPalabra(&estado, config);
             clasificarOracion(&estado);
+            break;
+        }
+        
+        if (bytes_leidos != sizeof(Mensaje)) {
+            fprintf(stderr, "[Ventana #%d PID %d] Error recv no se recibió el mensaje completo\n", id_ventana, (int)pid_ventana);
             break;
         }
 
@@ -290,9 +295,10 @@ void *hiloVentana(void *param) {
             if (estado.longitud_palabra > 0) {
                 estado.longitud_palabra--;
                 estado.palabra_actual[estado.longitud_palabra] = '\0';
-
-                estado.longitud_historial--;
-                estado.historial[estado.longitud_historial] = '\0';
+                if (estado.longitud_historial >0) {
+                    estado.longitud_historial--;
+                    estado.historial[estado.longitud_historial] = '\0';
+                }
             }
             continue;
         }
@@ -332,7 +338,7 @@ void *hiloVentana(void *param) {
             // no es una palabra que pertenezca a algun diccionario.
         }
 
-        printf("[hiloVentana PID #%d]: %d | Caracter recibido: '%c'\n", pid_ventana, c);
+        printf("[hiloVentana PID #%d]: %d | Caracter recibido: '%c'\n", pid_ventana, c, c);
     }
 
     // Se cierra ventana, hacemos clasificacion final
@@ -358,7 +364,6 @@ void *hiloVentana(void *param) {
         pthread_mutex_unlock(&mutex_resultados);
     }
 
-    free(estado.historial);
     free(estado.frecuencias_oracion);
     free(estado.vec_total);
     free(estado.historial);
@@ -423,7 +428,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    arrHilos = malloc (100 * sizeof(pthread_t)); // Tam inicial
+    arrHilos = malloc(capacidadArrHilos * sizeof(pthread_t)); // Tam inicial
     if (!arrHilos) {
         fprintf(stderr, "[ialearner] Error malloc arrHilos\n");
         free(contadores_tipos);
@@ -432,7 +437,7 @@ int main(int argc, char *argv[]) {
     }
     
     
-    int server_sockfd;
+    int server_sockfd = -1;
     struct sockaddr_in socket_address;
     struct sockaddr_in client_address;
     
@@ -530,17 +535,17 @@ int main(int argc, char *argv[]) {
         // otros launchers se conecten a la vez
         pthread_detach(arrHilos[totalHilos]);
         totalHilos++;
-        totalHilos++;
     }
 
-    close(server_sockfd);
+    if(server_sockfd >= 0) close(server_sockfd);
     free(contadores_tipos);
     free(arrHilos);
     liberarConfig(&config);
     return 0;
 
+
     limpiezaFinalError:
-    close(server_sockfd);
+    if(server_sockfd >= 0) close(server_sockfd);
     free(contadores_tipos);
     free(arrHilos);
     liberarConfig(&config);
