@@ -26,12 +26,26 @@ size_t capacidadArrHilos = 16; // El espacio reservado para el arreglo de ids de
 
 pthread_mutex_t mutex_resultados = PTHREAD_MUTEX_INITIALIZER;
 
-int *contadores_tipos = NULL; // contadores_tipos[i] = num. ventanas del tipo i
+/* Una sesion representa un launcher conectado, con su propio conteo de tipos de ventana.
+ asi se pueden conectar muchos launches a ialearner */
+typedef struct {
+    int id_launcher;
+    int socket_control;
+    int *contadores_tipos; // contadores_tipos[i] = num. ventanas del tipo i
+    pthread_mutex_t mutex; // mutex para contadores_tipos que es global por launcher
+    int activa; // 0 si el launcher termina o desconecta
+} SesionLauncher;
+
+SesionLauncher **sesiones = NULL;
+
+size_t num_sesiones = 0;
+size_t cap_sesiones = 8;
+pthread_mutex_t mutex_sesiones = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
     int socket_fd;
     ConfigIALearner *config; // puntero, config es de solo lectura
-} ArgsHilo;
+} ArgsConexion;
 
 typedef struct {
     char palabra_actual[64];
@@ -138,10 +152,10 @@ static int clasificarOracion(EstadoClasificacionVentana *estado) {
     return tipo_dominante;
 }
 
-/* Clasifica la ventana completa usando vec_total.
+/* Clasifica la ventana completa usando vec_total
  Aplica la regla: minimo umbral_ocurrencias para ser candidato,
- si mas de uno cumple gana el de mayor suma.
- Retorna indice del tipo ganador, o -1 si ninguno alcanza el umbral. */
+ si mas de uno cumple gana el de mayor suma
+ Retorna indice del tipo ganador, o -1 si ninguno alcanza el umbral */
 static int clasificarVentana(EstadoClasificacionVentana *estado, ConfigIALearner *config) {
     int mejor_tipo = -1;
     int mejor_suma = -1;
@@ -158,9 +172,9 @@ static int clasificarVentana(EstadoClasificacionVentana *estado, ConfigIALearner
 }
 
 /* Determina el usuario del sistema segun las proporciones de las ventanas
- Tomando en cuenta todas las reglas de usuario que se definieron.
- Llena usuarios_aplicables[] con los indices de TiposUsuario que aplican.
- Puede retornar 0 (indeterminado) o mas de 1 (sistema indeciso). */
+ Tomando en cuenta todas las reglas de usuario que se definieron
+ Llena usuarios_aplicables[] con los indices de TiposUsuario que aplican
+ Puede retornar 0 (indeterminado) o mas de 1 (sistema indeciso) */
 void inferirTipoUsuario(int *contadores, int num_tipos, int total_ventanas, ConfigIALearner *config, int *usuarios_aplicables, int *num_aplicables) {
     *num_aplicables = 0;
     if (total_ventanas == 0 || config->num_reglas <= 0) return;
@@ -184,105 +198,140 @@ void inferirTipoUsuario(int *contadores, int num_tipos, int total_ventanas, Conf
     }
 }
 
+static void expandirArregloSesiones() {
+    cap_sesiones *= 2;
+    SesionLauncher **tmp = realloc(sesiones, cap_sesiones * sizeof(SesionLauncher *));
+    if (!tmp) {
+        fprintf(stderr, "[ialearner] Error realloc arreglo sesiones\n");
+        exit(EXIT_FAILURE);
+    }
+    sesiones = tmp;
+}
+
+/* Crea una sesion nueva para un launcher (se llama al recibir su TMSG_HELLO_CONTROL) */
+static SesionLauncher *crearSesion(int id_launcher, int socket_control, int num_tipos) {
+    pthread_mutex_lock(&mutex_sesiones);
+
+    SesionLauncher *nueva = malloc(sizeof(SesionLauncher));
+    if (!nueva) {
+        fprintf(stderr, "[ialearner] Error malloc SesionLauncher\n");
+        pthread_mutex_unlock(&mutex_sesiones);
+        return NULL;
+    }
+    nueva->contadores_tipos = calloc(num_tipos, sizeof(int));
+    if (!nueva->contadores_tipos) {
+        fprintf(stderr, "[ialearner] Error calloc contadores de sesion\n");
+        free(nueva);
+        pthread_mutex_unlock(&mutex_sesiones);
+        return NULL;
+    }
+    nueva->id_launcher = id_launcher;
+    nueva->socket_control = socket_control;
+    nueva->activa = 1;
+    pthread_mutex_init(&nueva->mutex, NULL);
+
+    if (num_sesiones >= cap_sesiones) expandirArregloSesiones();
+    sesiones[num_sesiones++] = nueva;
+
+    pthread_mutex_unlock(&mutex_sesiones);
+    return nueva;
+}
+
+/* Busca una sesion activa por id_launcher (se llama al recibir un TMSG_HELLO_VENTANA) */
+static SesionLauncher *buscarSesion(int id_launcher) {
+    pthread_mutex_lock(&mutex_sesiones);
+    SesionLauncher *encontrada = NULL;
+    for (size_t i = 0; i < num_sesiones; i++) {
+        if (sesiones[i]->id_launcher == id_launcher && sesiones[i]->activa) {
+            encontrada = sesiones[i];
+            break;
+        }
+    }
+    pthread_mutex_unlock(&mutex_sesiones);
+    return encontrada;
+}
+
 /* Imprime el resultado de inferencia de usuario (compartido por hilo ventana e hilo control) */
-static void imprimirInferenciaUsuario(int *contadores, ConfigIALearner *config, const char *prefijo) {
-    pthread_mutex_lock(&mutex_resultados);
+static void imprimirInferenciaUsuario(SesionLauncher *sesion, ConfigIALearner *config, const char *prefijo) {
+    pthread_mutex_lock(&sesion->mutex);
 
     int total = 0;
-    for (int i = 0; i < config->num_tipos; i++) total += contadores[i];
+    for (int i = 0; i < config->num_tipos; i++) total += sesion->contadores_tipos[i];
 
-    printf("%s=== Estado actual de clasificacion ===\n", prefijo);
+    printf("%s[launcher PID %d] === Estado actual de clasificacion ===\n", prefijo, sesion->id_launcher);
     for (int i = 0; i < config->num_tipos; i++) {
-        printf("%s  %s: %d ventanas\n",
-               prefijo, config->tipos[i].nombre, contadores[i]);
+        printf("%s  %s: %d ventanas\n", prefijo, config->tipos[i].nombre, sesion->contadores_tipos[i]);
     }
 
     int usuarios[32];
     int num_aplicables = 0;
-    inferirTipoUsuario(contadores, config->num_tipos, total, config, usuarios, &num_aplicables);
+    inferirTipoUsuario(sesion->contadores_tipos, config->num_tipos, total, config, usuarios, &num_aplicables);
 
     if (num_aplicables == 0) {
         printf("%s  Tipo de usuario: Indeterminado (datos insuficientes)\n", prefijo);
     } else if (num_aplicables == 1) {
-        printf("%s  Tipo de usuario: %s\n",
-               prefijo, config->reglas[usuarios[0]].nombre);
+        printf("%s  Tipo de usuario: %s\n", prefijo, config->reglas[usuarios[0]].nombre);
     } else {
         printf("%s  Sistema indeciso. Tipos posibles: ", prefijo);
         for (int i = 0; i < num_aplicables; i++) {
-            printf("%s%s", config->reglas[usuarios[i]].nombre,
-                   i < num_aplicables - 1 ? " / " : "\n");
+            printf("%s%s", config->reglas[usuarios[i]].nombre, i < num_aplicables - 1 ? " / " : "\n");
         }
     }
     printf("%s=====================================\n", prefijo);
 
-    pthread_mutex_unlock(&mutex_resultados);
+    pthread_mutex_unlock(&sesion->mutex);
 }
 
-
 /* Funcionamiento del hilo asignado a cada ventana */
-void *hiloVentana(void *param) {
-    ArgsHilo *args = (ArgsHilo *)param;
-    int socket_fd = args->socket_fd;
-    ConfigIALearner *config = args->config;
-    free(args);
+static void trabajoVentana(int socket_fd, Mensaje *saludo, ConfigIALearner *config) {
+    int id_ventana = saludo->id_ventana;
+    pid_t pid_ventana = saludo->pid_ventana;
 
-    // Creamos la variable de estado para la ventana
+    SesionLauncher *sesion = buscarSesion(saludo->id_launcher);
+    if (!sesion) {
+        fprintf(stderr, "[Ventana #%d PID %d] Launcher %d desconocido (sin sesion de control activa), se rechaza\n",
+                id_ventana, (int)pid_ventana, saludo->id_launcher);
+        close(socket_fd);
+        return;
+    }
+
     EstadoClasificacionVentana estado;
-    memset(&estado, 0, sizeof(estado)); // inicializa todo a cero de una vez
-    
+    memset(&estado, 0, sizeof(estado));
     estado.capacidad_historial = 256;
-    estado.longitud_historial = 0;
     estado.historial = malloc(estado.capacidad_historial);
     estado.num_tipos = config->num_tipos;
     estado.frecuencias_oracion = calloc(config->num_tipos, sizeof(int));
     estado.vec_total = calloc(config->num_tipos, sizeof(int));
 
     if (!estado.frecuencias_oracion || !estado.vec_total || !estado.historial) {
-        fprintf(stderr, "[hiloVentana] Error de memoria al inicializar estado\n");
+        fprintf(stderr, "[trabajoVentana] Error de memoria al inicializar estado\n");
         free(estado.frecuencias_oracion);
         free(estado.vec_total);
         free(estado.historial);
         close(socket_fd);
-        return NULL;
+        return;
     }
+    estado.historial[0] = '\0';
 
-    estado.historial[0] = '\0'; // \0 porque no se ha tecleado nada aun
-    estado.longitud_palabra = 0;
-
-    pid_t pid_ventana = -1;
-    int id_ventana = -1;
-
-    // Bucle principal de recepcion de datos
     while (1) {
         Mensaje mensaje_recibido;
         int bytes_leidos = recv(socket_fd, &mensaje_recibido, sizeof(Mensaje), 0);
 
         if (bytes_leidos <= 0) {
-            // 0 = cliente cerro conexion sin TMSG_CIERRE crash, kill -9, entre otros
-            if (bytes_leidos < 0) {
-                perror("[hiloVentana] recv");
-            }
+            if (bytes_leidos < 0) perror("[trabajoVentana] recv");
             printf("[Ventana #%d PID %d] Conexion cerrada abruptamente — obteniendo clasificacion final...\n", id_ventana, (int)pid_ventana);
-
-            // Clasificamos final
             procesarPalabra(&estado, config);
             clasificarOracion(&estado);
             break;
         }
-        
+
         if (bytes_leidos != sizeof(Mensaje)) {
-            fprintf(stderr, "[Ventana #%d PID %d] Error recv no se recibió el mensaje completo\n", id_ventana, (int)pid_ventana);
+            fprintf(stderr, "[Ventana #%d PID %d] Mensaje incompleto, se cierra la conexion\n", id_ventana, (int)pid_ventana);
             break;
         }
 
-        pid_ventana = mensaje_recibido.pid_ventana;
-        id_ventana = mensaje_recibido.id_ventana;
-
-        // TIPO MSG_CIERRE, se cerro la ventana
         if (mensaje_recibido.tipo_mensaje == TMSG_CIERRE) {
             printf("[Ventana #%d PID %d] Mensaje de cierre recibido.\n", id_ventana, (int)pid_ventana);
-
-            // Procesamos la ultima palabra/oracion pendiente antes de clasificar
             procesarPalabra(&estado, config);
             if (sumaVector(estado.frecuencias_oracion, estado.num_tipos) > 0) {
                 clasificarOracion(&estado);
@@ -290,12 +339,11 @@ void *hiloVentana(void *param) {
             break;
         }
 
-        // TIPO MSG_BACKSPACE, se quiere borrar
         if (mensaje_recibido.tipo_mensaje == TMSG_BACKSPACE) {
             if (estado.longitud_palabra > 0) {
                 estado.longitud_palabra--;
                 estado.palabra_actual[estado.longitud_palabra] = '\0';
-                if (estado.longitud_historial >0) {
+                if (estado.longitud_historial > 0) {
                     estado.longitud_historial--;
                     estado.historial[estado.longitud_historial] = '\0';
                 }
@@ -303,12 +351,10 @@ void *hiloVentana(void *param) {
             continue;
         }
 
-        // TIPO MSG_FIN_ORACION: Return
         if (mensaje_recibido.tipo_mensaje == TMSG_FIN_ORACION) {
             procesarPalabra(&estado, config);
             clasificarOracion(&estado);
 
-            // Clasificamos la ventana hasta este punto
             int tipo_ventana = clasificarVentana(&estado, config);
             if (tipo_ventana >= 0) {
                 printf("[Ventana #%d] Actualmente clasificada como: %s\n", id_ventana, config->tipos[tipo_ventana].nombre);
@@ -316,32 +362,27 @@ void *hiloVentana(void *param) {
                 printf("[Ventana #%d] Actualmente tipo Desconocido.\n", id_ventana);
             }
 
-            // Mostramos la inferencia de usuario con los datos hasta ahora */
-            imprimirInferenciaUsuario(contadores_tipos, config, "  [progreso] ");
-
+            imprimirInferenciaUsuario(sesion, config, "  [progreso] ");
             agregarLetraAHistorial(&estado, '\n');
             continue;
         }
 
-        // TIPO MSG_TECLA: caracter normal
-        char c = mensaje_recibido.tecla;
-        agregarLetraAHistorial(&estado, c);
+        if (mensaje_recibido.tipo_mensaje == TMSG_TECLA) {
+            char c = mensaje_recibido.tecla;
+            agregarLetraAHistorial(&estado, c);
 
-        if (strchr(config->delimitadores, c) != NULL) {
-            procesarPalabra(&estado, config); // es delimitador
-        } else {
-            if (estado.longitud_palabra + 1 < sizeof(estado.palabra_actual)) {
+            if (strchr(config->delimitadores, c) != NULL) {
+                procesarPalabra(&estado, config);
+            } else if (estado.longitud_palabra + 1 < sizeof(estado.palabra_actual)) {
                 estado.palabra_actual[estado.longitud_palabra++] = c;
                 estado.palabra_actual[estado.longitud_palabra] = '\0';
             }
-            // Si la palabra excede el tamano del buffer, simplemente ignoramos
-            // no es una palabra que pertenezca a algun diccionario.
+            printf("[Ventana #%d PID %d] Caracter recibido: '%c'\n", id_ventana, (int)pid_ventana, c);
+            continue;
         }
 
-        printf("[hiloVentana PID #%d]: %d | Caracter recibido: '%c'\n", pid_ventana, c, c);
+        fprintf(stderr, "[Ventana #%d PID %d] Tipo de mensaje inesperado (%d), se ignora\n", id_ventana, (int)pid_ventana, mensaje_recibido.tipo_mensaje);
     }
-
-    // Se cierra ventana, hacemos clasificacion final
 
     int tipoVentanaFinal = clasificarVentana(&estado, config);
 
@@ -354,48 +395,87 @@ void *hiloVentana(void *param) {
 
     if (tipoVentanaFinal >= 0) {
         printf("[Ventana #%d PID %d] Clasificacion final: %s\n", id_ventana, (int)pid_ventana, config->tipos[tipoVentanaFinal].nombre);
+        pthread_mutex_lock(&sesion->mutex);
+        sesion->contadores_tipos[tipoVentanaFinal]++;
+        pthread_mutex_unlock(&sesion->mutex);
     } else {
         printf("[Ventana #%d PID %d] Clasificacion final: Desconocida (menos de %d ocurrencias en todos los tipos)\n", id_ventana, (int)pid_ventana, config->umbral_ocurrencias);
     }
 
-    if (tipoVentanaFinal >= 0) {
-        pthread_mutex_lock(&mutex_resultados);
-        contadores_tipos[tipoVentanaFinal]++;
-        pthread_mutex_unlock(&mutex_resultados);
+    Mensaje respuesta;
+    memset(&respuesta, 0, sizeof(respuesta));
+    respuesta.tipo_mensaje = TMSG_RESULTADO_VENTANA;
+    respuesta.id_ventana  = id_ventana;
+    respuesta.pid_ventana = pid_ventana;
+    strncpy(respuesta.nombre_tipo, tipoVentanaFinal >= 0 ? config->tipos[tipoVentanaFinal].nombre : "Desconocido", sizeof(respuesta.nombre_tipo) - 1);
+
+    if (send(sesion->socket_control, &respuesta, sizeof(Mensaje), 0) < 0) {
+        perror("[trabajoVentana] Error enviando resultado al launcher (puede que ya se haya desconectado)");
     }
 
     free(estado.frecuencias_oracion);
     free(estado.vec_total);
     free(estado.historial);
     close(socket_fd);
-
-    return NULL;
 }
 
-void *hiloControl(void *param) {
-    ArgsHilo *args = (ArgsHilo *)param;
+static void trabajoControl(int socket_fd, int id_launcher, ConfigIALearner *config) {
+    SesionLauncher *sesion = crearSesion(id_launcher, socket_fd, config->num_tipos);
+    if (!sesion) {
+        fprintf(stderr, "[ialearner] No se pudo crear sesion para launcher PID %d\n", id_launcher);
+        close(socket_fd);
+        return;
+    }
+    printf("[ialearner] Nueva sesion de control: launcher PID %d\n", id_launcher);
+
+    Mensaje msg;
+    int bytes;
+    while ((bytes = recv(socket_fd, &msg, sizeof(Mensaje), 0)) > 0) {
+        if (bytes != sizeof(Mensaje)) {
+            fprintf(stderr, "[trabajoControl] Mensaje incompleto de launcher PID %d, se cierra su sesion\n", id_launcher);
+            break;
+        }
+        if (msg.tipo_mensaje == TMSG_CALC_USER) {
+            printf("\n[trabajoControl] Launcher PID %d solicita resultado final del lote.\n", id_launcher);
+            imprimirInferenciaUsuario(sesion, config, "[RESULTADO] ");
+
+            pthread_mutex_lock(&sesion->mutex);
+            memset(sesion->contadores_tipos, 0, config->num_tipos * sizeof(int));
+            pthread_mutex_unlock(&sesion->mutex);
+        }
+    }
+
+    printf("[trabajoControl] Launcher PID %d desconectado.\n", id_launcher);
+    sesion->activa = 0; // ventanas tardias de este launcher seran rechazadas por buscarSesion
+    close(socket_fd);
+}
+
+/* Se usa para recibir cualquier conexion entrante. Lee el primer mensaje
+ para decidir si es un launcher (control) o una ventana, y llama a las funciones. */
+void *hiloConexion(void *param) {
+    ArgsConexion *args = (ArgsConexion *)param;
     int socket_fd = args->socket_fd;
     ConfigIALearner *config = args->config;
     free(args);
 
-    Mensaje msg;
-    while (recv(socket_fd, &msg, sizeof(Mensaje), 0) > 0) {
-        if (msg.tipo_mensaje == TMSG_CALC_USER) {
-            printf("\n[hiloControl] Launcher solicita resultado final del lote.\n");
-            imprimirInferenciaUsuario(contadores_tipos, config, "[RESULTADO] ");
-
-            /* Reiniciamos para el siguiente lote */
-            pthread_mutex_lock(&mutex_resultados);
-            memset(contadores_tipos, 0, config->num_tipos * sizeof(int));
-            pthread_mutex_unlock(&mutex_resultados);
-        }
+    Mensaje saludo;
+    int bytes = recv(socket_fd, &saludo, sizeof(Mensaje), 0);
+    if (bytes != sizeof(Mensaje)) {
+        fprintf(stderr, "[ialearner] Conexion entrante invalida (saludo incompleto), se descarta\n");
+        close(socket_fd);
+        return NULL;
     }
 
-    printf("[hiloControl] Conexion de control cerrada. Launcher desconectado.\n");
-    close(socket_fd);
+    if (saludo.tipo_mensaje == TMSG_HELLO_CONTROL) {
+        trabajoControl(socket_fd, saludo.id_launcher, config);
+    } else if (saludo.tipo_mensaje == TMSG_HELLO_VENTANA) {
+        trabajoVentana(socket_fd, &saludo, config);
+    } else {
+        fprintf(stderr, "[ialearner] Se esperaba un saludo (HELLO_*), se recibio tipo %d\n", saludo.tipo_mensaje);
+        close(socket_fd);
+    }
     return NULL;
 }
-
 
 int main(int argc, char *argv[]) {
 
@@ -419,19 +499,12 @@ int main(int argc, char *argv[]) {
         liberarConfig(&config);
         return 1;
     }
-    imprimirConfig(&config); // muestra la config al arrancar, para veruficar nomas
+    imprimirConfig(&config); // muestra la config al arrancar, para veruficar
 
-    contadores_tipos = calloc(config.num_tipos, sizeof(int));
-    if (!contadores_tipos) {
-        fprintf(stderr, "[ialearner] Error calloc contadores_tipos\n");
-        liberarConfig(&config);
-        return 1;
-    }
     
     arrHilos = malloc(capacidadArrHilos * sizeof(pthread_t)); // Tam inicial
     if (!arrHilos) {
         fprintf(stderr, "[ialearner] Error malloc arrHilos\n");
-        free(contadores_tipos);
         liberarConfig(&config);
         return 1;
     }
@@ -474,71 +547,43 @@ int main(int argc, char *argv[]) {
         goto limpiezaFinalError;
     }
 
-    printf("[ialearner] Receptor listo, esperando mensajes en el puerto %d...\n", puerto);
+    printf("[ialearner] Receptor listo, esperando conexiones en el puerto %d...\n", puerto);
 
-    // La primera conexion sera la del hilo de control
-    int socket_control = accept(server_sockfd, (struct sockaddr *)&client_address, (socklen_t *)&addrlen);
-    if (socket_control < 0) {
-        perror("[ialearner] accept para hiloControl falló");
-        goto limpiezaFinalError;
-    }
-    printf("[ialearner] Conexion de control establecida.\n");
+    /* Cualquier conexion entra por este mismo loop, sea de control o de ventana,
+    de cualquier launcher. hiloConexion decide que es leyendo su saludo inicial. */
+    while (1) {
+        int socket_entrante = accept(server_sockfd, (struct sockaddr *)&client_address, (socklen_t *)&addrlen);
 
-    ArgsHilo *ctrl_args = malloc(sizeof(ArgsHilo));
-    if (!ctrl_args) {
-        fprintf(stderr, "[ialearner] Error malloc ArgsHiloControl\n");
-        close(socket_control);
-        goto limpiezaFinalError;
-    }
-    ctrl_args->socket_fd = socket_control;
-    ctrl_args->config = &config;
-
-    pthread_t hilo_control;
-    if (pthread_create(&hilo_control, NULL, hiloControl, ctrl_args) != 0) {
-        perror("[ialearner] pthread_create (control)");
-        free(ctrl_args);
-        close(socket_control);
-        goto limpiezaFinalError;
-    }
-
-    // Bucle infinito para recibir las conexiones de las ventanas
-    while(1) {
-
-        int socket_hilo = accept(server_sockfd, (struct sockaddr *)&client_address, (socklen_t*)&addrlen);
-
-        if (socket_hilo < 0) {
-            perror("[ialearner] Accept para hiloVentana falló");
+        if (socket_entrante < 0) {
+            perror("[ialearner] accept fallo");
             continue;
         }
 
-        if (totalHilos >= capacidadArrHilos){
+        if (totalHilos >= capacidadArrHilos) {
             expandirArregloHilos();
         }
 
-        ArgsHilo *ventana_args = malloc(sizeof(ArgsHilo));
-        if (!ventana_args) {
-            fprintf(stderr, "[ialearner] Error malloc ArgsHiloVentana\n");
-            close(socket_hilo);
+        ArgsConexion *args = malloc(sizeof(ArgsConexion));
+        if (!args) {
+            fprintf(stderr, "[ialearner] Error malloc ArgsConexion\n");
+            close(socket_entrante);
             continue;
         }
-        ventana_args->socket_fd = socket_hilo;
-        ventana_args->config = &config; // puntero a la config global
-        
-        if (pthread_create(&arrHilos[totalHilos], NULL, hiloVentana, ventana_args) != 0) {
-            perror("[ialearner] pthread_create (ventana)");
-            free(ventana_args);
-            close(socket_hilo);
+        args->socket_fd = socket_entrante;
+        args->config = &config;
+
+        if (pthread_create(&arrHilos[totalHilos], NULL, hiloConexion, args) != 0) {
+            perror("[ialearner] pthread_create (conexion)");
+            free(args);
+            close(socket_entrante);
             continue;
         }
 
-        // Hacemos detach y no join para no bloquear el bucle de ialearner y permitir que
-        // otros launchers se conecten a la vez
         pthread_detach(arrHilos[totalHilos]);
         totalHilos++;
     }
 
     if(server_sockfd >= 0) close(server_sockfd);
-    free(contadores_tipos);
     free(arrHilos);
     liberarConfig(&config);
     return 0;
@@ -546,7 +591,6 @@ int main(int argc, char *argv[]) {
 
     limpiezaFinalError:
     if(server_sockfd >= 0) close(server_sockfd);
-    free(contadores_tipos);
     free(arrHilos);
     liberarConfig(&config);
     return -1;

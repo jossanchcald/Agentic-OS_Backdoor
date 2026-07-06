@@ -37,7 +37,7 @@ typedef struct {
     int id_local; // id de cada ventana
     pid_t pid; // PID de cada ventana (procesos hijo) 
     EstadoVentana estado;
-    int tipo_documento;
+    char tipo_documento[64];
 } InfoVentana;
 
 typedef struct {
@@ -54,10 +54,13 @@ static int num_activas = 0;
 
 pthread_mutex_t mutex_ventanas = PTHREAD_MUTEX_INITIALIZER;
 
-int socket_control = -1; // Socket para hiloMonitor
+int socket_control = -1;
 int launcher_corriendo = 1;
+static int id_launcher_actual = -1; // PID propio para identificar el launcher unico
 
 static ConfigConexionLauncher cfg_global;
+
+
 
 
 
@@ -160,7 +163,8 @@ int crearConexion(const char *host, int puerto) {
     return socket_fd;
 }
 
-int createWindow(int socket_fd, int id_ventana) {
+/* Crea una ventana gráfica usando X11 */
+int createWindow(int socket_fd, int id_launcher, int id_ventana) {
     Display *display = XOpenDisplay(NULL);
     if (!display) {
         fprintf(stderr, "[ventana %d] Cannot open display\n", id_ventana);
@@ -177,23 +181,30 @@ int createWindow(int socket_fd, int id_ventana) {
         WhitePixel(display, screen)
     );
 
-    // Título de la ventana muestra el ID local
-    char titulo[64]; 
     int pid_actual = (int)getpid();
+    char titulo[64];
     sprintf(titulo, "Ventana #%d (PID %d)", id_ventana, pid_actual);
-
     XStoreName(display, window, titulo);
 
-    // Aqui se registra el evento de cierre con el boton X o alt+f4
     Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, window, &wmDelete, 1);
 
-    Mensaje mensaje;
-    mensaje.pid_ventana = getpid();
-    mensaje.id_ventana  = id_ventana;
-
     XSelectInput(display, window, ExposureMask | KeyPressMask);
     XMapWindow(display, window);
+
+    // Saludo inicial para identifica esta ventana ante ialearner, una sola vez
+    Mensaje saludo;
+    memset(&saludo, 0, sizeof(saludo));
+    saludo.tipo_mensaje = TMSG_HELLO_VENTANA;
+    saludo.id_launcher  = id_launcher;
+    saludo.id_ventana   = id_ventana;
+    saludo.pid_ventana  = pid_actual;
+    if (send(socket_fd, &saludo, sizeof(Mensaje), 0) < 0) {
+        perror("[ventana] Error enviando saludo a IALearner");
+        XDestroyWindow(display, window);
+        XCloseDisplay(display);
+        return 1;
+    }
 
     int cerrar = 0;
     XEvent event;
@@ -201,7 +212,9 @@ int createWindow(int socket_fd, int id_ventana) {
     while (!cerrar) {
         XNextEvent(display, &event);
 
-        // Cierre con boton X o alt+f4
+        Mensaje mensaje;
+        memset(&mensaje, 0, sizeof(mensaje));
+
         if (event.type == ClientMessage && (Atom)event.xclient.data.l[0] == wmDelete) {
             mensaje.tipo_mensaje = TMSG_CIERRE;
             if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0)
@@ -210,20 +223,14 @@ int createWindow(int socket_fd, int id_ventana) {
             continue;
         }
 
-        if (event.type != KeyPress) {
-            continue;
-        }
+        if (event.type != KeyPress) continue;
 
         KeySym keysym;
         char buffer_tecla[8];
-        // La funcion XLookupString traduce un evento de tecla al texto real que debería producir, presionas ',', da ',' en el buffer
         int n = XLookupString(&event.xkey, buffer_tecla, sizeof(buffer_tecla) - 1, &keysym, NULL);
-        buffer_tecla[n] = '\0'; // aseguramos el string, n es el numero de bytes guardado en el buffer
+        buffer_tecla[n] = '\0';
 
-        // Ignoramos lo que se ingresa si se estaba presionando ctrl
-        if (event.xkey.state & ControlMask) {
-            continue;
-        }
+        if (event.xkey.state & ControlMask) continue;
 
         if (keysym == XK_Escape) {
             mensaje.tipo_mensaje = TMSG_CIERRE;
@@ -244,7 +251,7 @@ int createWindow(int socket_fd, int id_ventana) {
             mensaje.tipo_mensaje = TMSG_TECLA;
             mensaje.tecla = buffer_tecla[0];
         } else {
-            continue; // Se presiona una tecla que no genera texto, como shift, mayus, f1, etc
+            continue;
         }
 
         if (send(socket_fd, &mensaje, sizeof(Mensaje), 0) < 0) {
@@ -275,10 +282,13 @@ static int agregarVentana(pid_t pid, int id_local) {
     ventanas[num_ventanas].id_local = id_local;
     ventanas[num_ventanas].pid = pid;
     ventanas[num_ventanas].estado = VENTANA_ACTIVA;
-    ventanas[num_ventanas].tipo_documento = -1;
+    strncpy(ventanas[num_ventanas].tipo_documento, "Sin clasificar", sizeof(ventanas[num_ventanas].tipo_documento) - 1);
+    ventanas[num_ventanas].tipo_documento[sizeof(ventanas[num_ventanas].tipo_documento) - 1] = '\0';
     num_activas++;
+    int idx = num_ventanas++;
     pthread_mutex_unlock(&mutex_ventanas);
-    return num_ventanas++;
+
+    return idx;
 }
 
 /* Busca una ventana por ID local. Retorna puntero o NULL. - O(n)*/
@@ -297,7 +307,7 @@ static InfoVentana *buscarPorPid(pid_t pid) {
     return NULL;
 }
 
-
+/* Hilo que verifica SIGCHLD que envia el kernel cuando termina una ventana */
 void *hiloMonitor(void *arg) {
     (void)arg;
 
@@ -348,7 +358,7 @@ void *hiloMonitor(void *arg) {
             Mensaje msg;
             memset(&msg, 0, sizeof(msg));
             msg.tipo_mensaje = TMSG_CALC_USER;
-            msg.pid_ventana  = getpid();
+            msg.id_launcher  = id_launcher_actual;
             if (send(socket_control, &msg, sizeof(Mensaje), 0) < 0) {
                 perror("[hiloMonitor] Error enviando MSG_CALC_USER");
             } else {
@@ -361,6 +371,32 @@ void *hiloMonitor(void *arg) {
     return NULL;
 }
 
+/* Hilo que recibe notificaciones de ialearner (tipo de ventana clasificada) */
+void *hiloReceptorControl(void *arg) {
+    (void)arg;
+
+    Mensaje msg;
+    int bytes;
+    while ((bytes = recv(socket_control, &msg, sizeof(Mensaje), 0)) > 0) {
+        if (bytes != sizeof(Mensaje)) {
+            fprintf(stderr, "[launcher] Mensaje incompleto de IALearner, se ignora\n");
+            continue;
+        }
+        if (msg.tipo_mensaje == TMSG_RESULTADO_VENTANA) {
+            pthread_mutex_lock(&mutex_ventanas);
+            InfoVentana *v = buscarPorId(msg.id_ventana);
+            if (v) {
+                strncpy(v->tipo_documento, msg.nombre_tipo, sizeof(v->tipo_documento) - 1);
+                v->tipo_documento[sizeof(v->tipo_documento) - 1] = '\0';
+                printf("\n[ialearner] Ventana #%d clasificada.\n", msg.id_ventana);
+                printf("launcher> ");
+                fflush(stdout);
+            }
+            pthread_mutex_unlock(&mutex_ventanas);
+        }
+    }
+    return NULL;
+}
 
 /* Crea n ventanas nuevas */
 static void comandoCrear(int n) {
@@ -384,7 +420,7 @@ static void comandoCrear(int n) {
                 fprintf(stderr, "[ventana %d] No se pudo conectar a IALearner\n", id_local);
                 exit(1);
             }
-            int ret = createWindow(socket_fd, id_local);
+            int ret = createWindow(socket_fd, id_launcher_actual, id_local);
             close(socket_fd);
             exit(ret);
         }
@@ -398,7 +434,7 @@ static void comandoCrear(int n) {
     }
 }
 
-/* Muestra el estado de todas las ventanas que hayan sido creadas - ESTO ESTA HARDCODEADO */
+/* Muestra el estado de todas las ventanas que hayan sido creadas*/
 static void comandoEstado(void) {
     pthread_mutex_lock(&mutex_ventanas);
 
@@ -423,13 +459,7 @@ static void comandoEstado(void) {
         }
         
         const char *tipo_str;
-        switch (ventanas[i].tipo_documento) {
-            case 1:  tipo_str = "Correo";   break;
-            case 2:  tipo_str = "Articulo"; break;
-            case 3:  tipo_str = "Reporte";  break;
-            default: tipo_str = "Sin clasificar"; break;
-        }
-        printf("  %-6d %-10d %-12s %s\n", ventanas[i].id_local, (int)ventanas[i].pid, estado_str, tipo_str);
+        printf("  %-6d %-10d %-12s %s\n", ventanas[i].id_local, (int)ventanas[i].pid, estado_str, ventanas[i].tipo_documento); // directamente el nombre
     }
     pthread_mutex_unlock(&mutex_ventanas);
 }
@@ -471,17 +501,17 @@ static int comandoCerrarPid(pid_t pid) {
     return 0;
 }
 
+/* Cierra todas las ventanas activas */
 static void comandoCerrarTodas(void) {
 
     pthread_mutex_lock(&mutex_ventanas);
     if (num_activas <= 0) {
         printf("  No existen ventanas activas.");
+        pthread_mutex_unlock(&mutex_ventanas);
         return;
     }
-    pthread_mutex_unlock(&mutex_ventanas);
     
     int enviadas = 0;
-    pthread_mutex_lock(&mutex_ventanas);
     for (size_t i = 0; i < num_ventanas; i++) {
         if (ventanas[i].estado == VENTANA_ACTIVA) {
             kill(ventanas[i].pid, SIGTERM);
@@ -492,6 +522,7 @@ static void comandoCerrarTodas(void) {
     printf("  Señal de cierre enviada a %d ventana(s) activa(s).\n", enviadas);
 }
 
+/* Muestra todos los comandos que se puede usar en la terminal de launcher */
 static void comandoAyuda(void) {
     printf("  Comandos disponibles:\n");
     printf("    crear <n>          Crear n ventanas nuevas\n");
@@ -503,6 +534,7 @@ static void comandoAyuda(void) {
     printf("    salir              Cerrar el launcher (muestra resumen final)\n");
 }
 
+/* Muestra las claseificaciones finales cuando se cierra launcher */
 static void mostrarResumenFinal(void) {
     printf("\n Proceso launcher terminado, inferencias finales... \n");
     int total = 0, activas = 0, cerradas = 0;
@@ -519,6 +551,7 @@ static void mostrarResumenFinal(void) {
     printf("================================\n");
 }
 
+/* Bucle del hilo main, para la terminal interactiva */
 static void bucleComandos(void) {
     char linea[256];
 
@@ -592,14 +625,28 @@ int main(void) {
         return 1;
     }
 
-    // Intentamos conectar el socket de control a ialearner para verificar conexion
+    // Intentamos conectar el socket de control a ialearner
     socket_control = crearConexion(cfg_global.host, cfg_global.puerto);
     if (socket_control < 0) {
         fprintf(stderr, "[launcher] No se pudo establecer conexion de control con IALearner.\n\tVerifique que IALearner este en ejecucion.\n");
         free(ventanas);
         return 1;
     }
-    printf("[launcher] Conexion de control establecida con IALearner (%s:%d)\n", cfg_global.host, cfg_global.puerto);
+
+    id_launcher_actual = (int)getpid();
+
+    Mensaje saludo;
+    memset(&saludo, 0, sizeof(saludo));
+    saludo.tipo_mensaje = TMSG_HELLO_CONTROL;
+    saludo.id_launcher  = id_launcher_actual;
+    if (send(socket_control, &saludo, sizeof(Mensaje), 0) < 0) {
+        perror("[launcher] Error enviando saludo de control a IALearner");
+        close(socket_control);
+        free(ventanas);
+        return 1;
+    }
+
+    printf("[launcher] Conexion de control establecida con IALearner (%s:%d), id_launcher=%d\n", cfg_global.host, cfg_global.puerto, id_launcher_actual);
 
     // Bloquear SIGCHLD inmediatamente en el main.
     // Garantizamos que el kernel no interrumpirá al main de forma asíncrona.
@@ -615,6 +662,14 @@ int main(void) {
         close(socket_control);
         free(ventanas);
         return 1;
+    }
+
+    pthread_t hilo_receptor;
+    if (pthread_create(&hilo_receptor, NULL, hiloReceptorControl, NULL) != 0) {
+        perror("[launcher] Error creando hilo receptor de control");
+        // no es fatal, el launcher puede funcionar sin esto
+    } else {
+        pthread_detach(hilo_receptor); // se limpia solo
     }
 
     bucleComandos();

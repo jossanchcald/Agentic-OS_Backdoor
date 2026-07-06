@@ -387,11 +387,11 @@ int parsearReglas(const char *ruta, ConfigIALearner *config) {
             int es_duplicado = 0;
             for (int i = 0; i < config->num_reglas; i++) {
                 if (strcasecmp(config->reglas[i].nombre, linea + 8) == 0) {
-                    fprintf(stderr, "[config] Linea %d: tipo de USUARIO ya definido\n", num_linea);
+                    fprintf(stderr, "[config] Linea %d: USUARIO '%s' ya definido, se omite\n", num_linea, linea + 8);
+                    es_duplicado = 1;
                     break;
                 }
             }
-
             if (es_duplicado) continue;
             
 

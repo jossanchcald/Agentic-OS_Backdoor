@@ -1,7 +1,6 @@
 /* protocoloComms.h
-   Define el protocolo de mensajes entre launcher y ialearner.
-   Incluido por ambos programas. El puerto NO va aqui: lo lee cada
-   proceso de su propio archivo de configuracion. */
+ Define el protocolo de mensajes entre launcher y ialearner.
+ Incluido por ambos programas. */
 
 #ifndef PROTOCOLO_COMMS_H
 #define PROTOCOLO_COMMS_H
@@ -9,20 +8,30 @@
 #include <sys/types.h>
 
 /* Tipos de mensaje */
-#define TMSG_TECLA 1  // caracter normal 
-#define TMSG_CIERRE 2  // ventana cerrada (Escape, X, Alt+F4, kill, etc.) 
-#define TMSG_BACKSPACE 3  // borrar ultimo caracter
-#define TMSG_FIN_ORACION 4  // Return: fin de oracion 
+// Primeros mensajes para conexion de control y de ventana
+#define TMSG_HELLO_CONTROL 1
+#define TMSG_HELLO_VENTANA 2
 
-#define TMSG_CALC_USER 10 // mensaje de control para que se calcule el tipo de usuario
-#define TMSG_RESULTADO_VENTANA 11  // mensaje hacia launcher, tipo doc de una ventana
+// Mensajes del bucle de escritura
+#define TMSG_TECLA 3
+#define TMSG_CIERRE 4
+#define TMSG_BACKSPACE 5
+#define TMSG_FIN_ORACION 6
 
+// Mensajes de control
+#define TMSG_CALC_USER 10
+#define TMSG_RESULTADO_VENTANA 11
+
+
+/* Estructura de los mensajes  */
 typedef struct {
     int tipo_mensaje;
+    int id_launcher; // PID del proceso launcher; identifica su sesion en ialearner.
+
+    int id_ventana;
     pid_t pid_ventana;
-    int id_ventana; // ID local del launcher
-    int id_launcher;
     char tecla;
+    char nombre_tipo[64];
 } Mensaje;
 
 #endif
