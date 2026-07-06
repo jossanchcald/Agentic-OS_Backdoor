@@ -1,6 +1,6 @@
 # Compilador y banderas
 CC      = gcc
-CFLAGS  = -Wall -Wextra -std=c11 -g
+CFLAGS  = -Wall -Wextra -g
 LDFLAGS =
 LIBS_X11 = -lX11
 LIBS_PTHREAD = -lpthread

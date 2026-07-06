@@ -58,11 +58,6 @@ int socket_control = -1; // Socket para hiloMonitor
 int launcher_corriendo = 1;
 
 static ConfigConexionLauncher cfg_global;
-
-// Handler de señal: se ejecuta cuando el kernel manda SIGCHLD
-static volatile sig_atomic_t hay_hijo_terminado = 0;
-
-static void handlerSIGCHLD(int sig) {
     (void)sig;
     hay_hijo_terminado = 1; // solo seteamos el flag, nada mas en el handler
 }
@@ -277,10 +272,7 @@ static int agregarVentana(pid_t pid, int id_local) {
         ventanas = tmp;
         cap_ventanas = nueva_cap;
     }
-    pthread_mutex_unlock(&mutex_ventanas);
 
-
-    pthread_mutex_lock(&mutex_ventanas);
     ventanas[num_ventanas].id_local = id_local;
     ventanas[num_ventanas].pid = pid;
     ventanas[num_ventanas].estado = VENTANA_ACTIVA;
@@ -293,13 +285,13 @@ static int agregarVentana(pid_t pid, int id_local) {
 /* Busca una ventana por ID local. Retorna puntero o NULL. - O(n)*/
 static InfoVentana *buscarPorId(int id) {
     int idx = id - 1; // los IDs empiezan en 1, los indices en 0
-    if (idx < 0 || idx >= num_ventanas) return NULL;
+    if (idx < 0 || (size_t)idx >= num_ventanas) return NULL;
     return &ventanas[idx];
 }
 
 /* Busca una ventana por PID. Retorna puntero o NULL. - O(n) */
 static InfoVentana *buscarPorPid(pid_t pid) {
-    for (int i = 0; i < num_ventanas; i++) {
+    for (size_t i = 0; i < num_ventanas; i++) {
         if (ventanas[i].pid == pid)
             return &ventanas[i];
     }
@@ -308,20 +300,23 @@ static InfoVentana *buscarPorPid(pid_t pid) {
 
 
 void *hiloMonitor(void *arg) {
+    (void)arg;
 
-    // Instalamos el handler de SIGCHLD en este hilo
-    // (las señales se entregan al proceso, no a un hilo especifico,
-    //  pero podemos bloquearlas en main y desbloquearlas solo aqui)
+   // Configuramos el conjunto de señales que el hilo espera, SIGCHLD
     sigset_t set;
-    sigfillset(&set);          // bloquea todo
-    sigdelset(&set, SIGCHLD);  // quita SIGCHLD del bloqueo
+    sigemptyset(&set);
+    sigaddset(&set, SIGCHLD);
+
+    int sig_recibida;
 
     while (launcher_corriendo) {
-        // sigsuspend duerme atomicamente hasta que llegue SIGCHLD por el kernel
-        sigsuspend(&set);
+        // sigwait() suspende el hilo de forma segura. 
+        // Cuando llega SIGCHLD, recibe la señal y despierta.
+        int error = sigwait(&set, &sig_recibida);
+        if (error != 0) continue;
 
-        if (!hay_hijo_terminado) continue;
-        hay_hijo_terminado = 0;
+        // Verificación de salida
+        if (!launcher_corriendo) break;
 
         pthread_mutex_lock(&mutex_ventanas);
         int ventanas_activas = num_activas;
@@ -418,7 +413,7 @@ static void comandoEstado(void) {
     printf("  %-6s %-10s %-12s %s\n", "------", "----------", "------------", "---------");
 
     pthread_mutex_lock(&mutex_ventanas);
-    for (int i = 0; i < num_ventanas; i++) {
+    for (size_t i = 0; i < num_ventanas; i++) {
 
         const char *estado_str;
         if (ventanas[i].estado == VENTANA_ACTIVA) {
@@ -480,7 +475,7 @@ static void comandoCerrarTodas(void) {
     
     int enviadas = 0;
     pthread_mutex_lock(&mutex_ventanas);
-    for (int i = 0; i < num_ventanas; i++) {
+    for (size_t i = 0; i < num_ventanas; i++) {
         if (ventanas[i].estado == VENTANA_ACTIVA) {
             kill(ventanas[i].pid, SIGTERM);
             enviadas++;
@@ -504,7 +499,7 @@ static void comandoAyuda(void) {
 static void mostrarResumenFinal(void) {
     printf("\n Proceso launcher terminado, inferencias finales... \n");
     int total = 0, activas = 0, cerradas = 0;
-    for (int i = 0; i < num_ventanas; i++) {
+    for (size_t i = 0; i < num_ventanas; i++) {
         total++;
         if (ventanas[i].estado == VENTANA_ACTIVA) activas++;
         else cerradas++;
@@ -516,7 +511,6 @@ static void mostrarResumenFinal(void) {
     if (total > 0) comandoEstado();
     printf("================================\n");
 }
-
 
 static void bucleComandos(void) {
     char linea[256];
@@ -600,12 +594,12 @@ int main(void) {
     }
     printf("[launcher] Conexion de control establecida con IALearner (%s:%d)\n", cfg_global.host, cfg_global.puerto);
 
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handlerSIGCHLD;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART; // reiniciar syscalls interrumpidas por la señal
-    sigaction(SIGCHLD, &sa, NULL);
+    // Bloquear SIGCHLD inmediatamente en el main.
+    // Garantizamos que el kernel no interrumpirá al main de forma asíncrona.
+    sigset_t mascara;
+    sigemptyset(&mascara);
+    sigaddset(&mascara, SIGCHLD);
+    pthread_sigmask(SIG_BLOCK, &mascara, NULL); 
 
     pthread_t hilo_monitor;
 
@@ -619,6 +613,11 @@ int main(void) {
     bucleComandos();
 
     launcher_corriendo = 0;
+    
+    // Para despertar al hiloMonitor si se queda atrapado en sigwait() durante el cierre,
+    // le enviamos un SIGCHLD artificial nosotros mismos.
+    pthread_kill(hilo_monitor, SIGCHLD);
+
     comandoCerrarTodas();
     pthread_join(hilo_monitor, NULL);
 
