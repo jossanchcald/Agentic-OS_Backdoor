@@ -1,45 +1,28 @@
-# Compilador y banderas
-CC      = gcc
-CFLAGS  = -Wall -Wextra -g
-LDFLAGS =
-LIBS_X11 = -lX11
-LIBS_PTHREAD = -lpthread
-
-# Ejecutables
-TARGETS = launcher ialearner
-
-# Archivos fuente
-LAUNCHER_SRC = launcher.c
-IALEARNER_SRC = ialearner.c config.c
-
-# Objetos
-LAUNCHER_OBJ = $(LAUNCHER_SRC:.c=.o)
-IALEARNER_OBJ = $(IALEARNER_SRC:.c=.o)
-
-# Regla por defecto
-all: $(TARGETS)
-
-# Launcher
-launcher: $(LAUNCHER_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS_X11)
-
-# IALearner
-ialearner: $(IALEARNER_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS_PTHREAD)
-
-# Compilación de objetos
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Dependencias
-launcher.o: protocoloComms.h
-
-ialearner.o: protocoloComms.h config.h
-
-config.o: config.h
-
-# Limpieza
-clean:
-	rm -f *.o $(TARGETS)
+CC       = gcc
+CFLAGS   = -Wall -Wextra -g
+LDFLAGS_IALEARNER = -pthread
+LDFLAGS_LAUNCHER  = -pthread -lX11
 
 .PHONY: all clean
+
+all: ialearner launcher
+
+# --- ialearner ---
+ialearner: ialearner.o config.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS_IALEARNER)
+
+ialearner.o: ialearner.c protocoloComms.h config.h
+	$(CC) $(CFLAGS) -c ialearner.c -o $@
+
+config.o: config.c config.h
+	$(CC) $(CFLAGS) -c config.c -o $@
+
+# --- launcher ---
+launcher: launcher.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS_LAUNCHER)
+
+launcher.o: launcher.c protocoloComms.h
+	$(CC) $(CFLAGS) -c launcher.c -o $@
+
+clean:
+	rm -f *.o ialearner launcher
