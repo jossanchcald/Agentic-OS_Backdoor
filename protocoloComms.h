@@ -21,6 +21,7 @@
 // Mensajes de control
 #define TMSG_CALC_USER 10
 #define TMSG_RESULTADO_VENTANA 11
+#define TMSG_CONTEXTO_USUARIO 12
 
 
 /* Estructura de los mensajes  */

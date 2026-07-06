@@ -84,6 +84,17 @@ static void expandirArregloHilos(){
     arrHilos = tmp;
 }
 
+/* Duplica la capacidad del arreglo de sesiones*/
+static void expandirArregloSesiones() {
+    cap_sesiones *= 2;
+    SesionLauncher **tmp = realloc(sesiones, cap_sesiones * sizeof(SesionLauncher *));
+    if (!tmp) {
+        fprintf(stderr, "[ialearner] Error realloc arreglo sesiones\n");
+        exit(EXIT_FAILURE);
+    }
+    sesiones = tmp;
+}
+
 /* Busca a que tipos pertenece una palabra y aumenta la frecuencia de la
  oracion actual para cada uno */
 static void agregarPalabraAlVector(EstadoClasificacionVentana *estado, const char *palabra, ConfigIALearner *config) {
@@ -194,16 +205,6 @@ void inferirTipoUsuario(int *contadores, int num_tipos, int total_ventanas, Conf
     }
 }
 
-static void expandirArregloSesiones() {
-    cap_sesiones *= 2;
-    SesionLauncher **tmp = realloc(sesiones, cap_sesiones * sizeof(SesionLauncher *));
-    if (!tmp) {
-        fprintf(stderr, "[ialearner] Error realloc arreglo sesiones\n");
-        exit(EXIT_FAILURE);
-    }
-    sesiones = tmp;
-}
-
 /* Crea una sesion nueva para un launcher (se llama al recibir su TMSG_HELLO_CONTROL) */
 static SesionLauncher *crearSesion(int id_launcher, int socket_control, int num_tipos) {
     pthread_mutex_lock(&mutex_sesiones);
@@ -285,9 +286,9 @@ static void imprimirInferenciaUsuario(SesionLauncher *sesion, ConfigIALearner *c
     }
 
     if (es_resultado_final) {
-        printf("  ╚═══════════════════════════════════════╝\n\n");
+        printf("  ╚═════════════════════════════════════════╝\n\n");
     } else {
-        printf("  └───────────────────────────────────────\n\n");
+        printf("  └─────────────────────────────────────────\n\n");
     }
 
     pthread_mutex_unlock(&sesion->mutex);
@@ -364,16 +365,37 @@ static void trabajoVentana(int socket_fd, Mensaje *saludo, ConfigIALearner *conf
 
         if (mensaje_recibido.tipo_mensaje == TMSG_FIN_ORACION) {
             procesarPalabra(&estado, config);
+
+            int tipo_esta_oracion = -1;
+            int mayor = -1;
+            for (int i = 0; i < estado.num_tipos; i++) {
+                if (estado.frecuencias_oracion[i] > mayor) {
+                    mayor = estado.frecuencias_oracion[i];
+                    tipo_esta_oracion = i;
+                }
+            }
+            if (mayor == 0) tipo_esta_oracion = -1;
+
             clasificarOracion(&estado);
 
-            int tipo_ventana = clasificarVentana(&estado, config);
-            if (tipo_ventana >= 0) {
-                printf("[Ventana #%d] Actualmente clasificada como: %s\n", id_ventana, config->tipos[tipo_ventana].nombre);
+            int tipo_ventana_actual = clasificarVentana(&estado, config);
+
+            printf("\n  ┌── Oracion #%d  (Ventana #%d  Launcher #%d) ──\n", estado.total_oraciones, id_ventana, sesion->id_launcher);
+
+            if (tipo_esta_oracion >= 0) {
+                printf("  │  Tendencia de esta oracion : %s\n", config->tipos[tipo_esta_oracion].nombre);
             } else {
-                printf("[Ventana #%d] Actualmente tipo Desconocido.\n", id_ventana);
+                printf("  │  Tendencia de esta oracion : sin palabras del diccionario\n");
             }
 
-            imprimirInferenciaUsuario(sesion, config, 00);
+            if (tipo_ventana_actual >= 0) {
+                printf("  │  Clasificacion acumulada   : %s\n", config->tipos[tipo_ventana_actual].nombre);
+            } else {
+                printf("  │  Clasificacion acumulada   : Insuficiente (necesita %d ocurrencias)\n", config->umbral_ocurrencias);
+            }
+            printf("  └────────────────────────────────────────────\n");
+
+            imprimirInferenciaUsuario(sesion, config, 0);
             agregarLetraAHistorial(&estado, '\n');
             continue;
         }
@@ -430,6 +452,7 @@ static void trabajoVentana(int socket_fd, Mensaje *saludo, ConfigIALearner *conf
     close(socket_fd);
 }
 
+/* Funcionamiento del hilo asignado a un unico hilo de control por sesion de launcher */
 static void trabajoControl(int socket_fd, int id_launcher, ConfigIALearner *config) {
     SesionLauncher *sesion = crearSesion(id_launcher, socket_fd, config->num_tipos);
     if (!sesion) {
@@ -447,8 +470,49 @@ static void trabajoControl(int socket_fd, int id_launcher, ConfigIALearner *conf
             break;
         }
         if (msg.tipo_mensaje == TMSG_CALC_USER) {
-            printf("\n[trabajoControl] Launcher PID %d solicita resultado final del lote.\n", id_launcher);
+            printf("\n[trabajoControl] Launcher PID %d solicita resultado final del lote.\n",
+                id_launcher);
             imprimirInferenciaUsuario(sesion, config, 1);
+
+            pthread_mutex_lock(&sesion->mutex);
+
+            int total = 0;
+            for (int i = 0; i < config->num_tipos; i++) total += sesion->contadores_tipos[i];
+
+            int usuarios[32];
+            int num_aplicables = 0;
+            inferirTipoUsuario(sesion->contadores_tipos, config->num_tipos,
+                            total, config, usuarios, &num_aplicables);
+
+            /* Armamos el string del contexto */
+            char contexto[64];
+            if (num_aplicables == 0) {
+                strncpy(contexto, "Indeterminado", sizeof(contexto) - 1);
+            } else if (num_aplicables == 1) {
+                strncpy(contexto, config->reglas[usuarios[0]].nombre, sizeof(contexto) - 1);
+            } else {
+                /* Si hay varios posibles, los concatenamos separados por " / " */
+                contexto[0] = '\0';
+                for (int i = 0; i < num_aplicables; i++) {
+                    strncat(contexto, config->reglas[usuarios[i]].nombre,
+                            sizeof(contexto) - strlen(contexto) - 1);
+                    if (i < num_aplicables - 1)
+                        strncat(contexto, " / ", sizeof(contexto) - strlen(contexto) - 1);
+                }
+            }
+            contexto[sizeof(contexto) - 1] = '\0';
+
+            pthread_mutex_unlock(&sesion->mutex);
+
+            // Se manda el contexto al launcher por el socket de control
+            Mensaje respuesta;
+            memset(&respuesta, 0, sizeof(respuesta));
+            respuesta.tipo_mensaje = TMSG_CONTEXTO_USUARIO;
+            strncpy(respuesta.nombre_tipo, contexto, sizeof(respuesta.nombre_tipo) - 1);
+
+            if (send(socket_fd, &respuesta, sizeof(Mensaje), 0) < 0) {
+                perror("[trabajoControl] Error enviando contexto al launcher");
+            }
 
             pthread_mutex_lock(&sesion->mutex);
             memset(sesion->contadores_tipos, 0, config->num_tipos * sizeof(int));

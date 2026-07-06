@@ -61,8 +61,6 @@ static ConfigConexionLauncher cfg_global;
 
 
 
-
-
 /* Elimina espacios y saltos de linea al inicio y final de un string. */
 static void trim(char *s) {
     char *inicio = s;
@@ -365,17 +363,29 @@ void *hiloReceptorControl(void *arg) {
             fprintf(stderr, "[launcher] Mensaje incompleto de IALearner, se ignora\n");
             continue;
         }
+
         if (msg.tipo_mensaje == TMSG_RESULTADO_VENTANA) {
             pthread_mutex_lock(&mutex_ventanas);
             InfoVentana *v = buscarPorId(msg.id_ventana);
             if (v) {
-                strncpy(v->tipo_documento, msg.nombre_tipo, sizeof(v->tipo_documento) - 1);
+                strncpy(v->tipo_documento, msg.nombre_tipo,
+                        sizeof(v->tipo_documento) - 1);
                 v->tipo_documento[sizeof(v->tipo_documento) - 1] = '\0';
-                printf("\n[ialearner] Ventana #%d clasificada.\n", msg.id_ventana);
+                printf("\n[Launcher #%d ← IALearner] Ventana #%d clasificada como: %s\n",
+                       id_launcher_actual, msg.id_ventana, msg.nombre_tipo);
                 printf("launcher> ");
                 fflush(stdout);
             }
             pthread_mutex_unlock(&mutex_ventanas);
+
+        } else if (msg.tipo_mensaje == TMSG_CONTEXTO_USUARIO) {
+            printf("\n");
+            printf("  ╔══════════════════════════════════════════════╗\n");
+            printf("  ║  CONTEXTO DE USUARIO — Launcher #%d\n", id_launcher_actual);
+            printf("  ║  Tipo de usuario inferido: %s\n", msg.nombre_tipo);
+            printf("  ╚══════════════════════════════════════════════╝\n\n");
+            printf("launcher> ");
+            fflush(stdout);
         }
     }
     return NULL;

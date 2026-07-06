@@ -564,6 +564,7 @@ int aplicarPalabraAFrecuencias(const char *palabra, ConfigIALearner *config, int
     }
     return 0;
 }
+
 void liberarConfig(ConfigIALearner *config) {
     if (config->tabla_hash) {
         for (int i = 0; i < config->tam_hash; i++) {
@@ -593,7 +594,7 @@ void liberarConfig(ConfigIALearner *config) {
 }
 
 void imprimirConfig(const ConfigIALearner *config) {
-    printf("/////////////////// Configuracion cargada ///////////////////\n");
+    printf("────────────────── Configuracion cargada ──────────────────\n");
     printf("Tipos de documento: %d\n", config->num_tipos);
     for (int i = 0; i < config->num_tipos; i++) {
         printf("  [%d] %s (%d palabras)\n", i, config->tipos[i].nombre, config->tipos[i].num_palabras);
@@ -609,5 +610,5 @@ void imprimirConfig(const ConfigIALearner *config) {
             printf("    %s >= %.0f%%\n", config->tipos[idx].nombre, config->reglas[i].condiciones[j].proporcion_min * 100);
         }
     }
-    printf("/////////////////////////////////////////////////////////\n");
+    printf("───────────────────────────────────────────────────────────\n");
 }
