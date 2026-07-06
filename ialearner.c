@@ -24,8 +24,6 @@ pthread_t *arrHilos = NULL; // Array para almacenar los identificadores de los h
 size_t totalHilos = 0; // Tamaño real del arreglo de ids de hilos
 size_t capacidadArrHilos = 16; // El espacio reservado para el arreglo de ids de hilos
 
-pthread_mutex_t mutex_resultados = PTHREAD_MUTEX_INITIALIZER;
-
 /* Una sesion representa un launcher conectado, con su propio conteo de tipos de ventana.
  asi se pueden conectar muchos launches a ialearner */
 typedef struct {
@@ -508,6 +506,14 @@ int main(int argc, char *argv[]) {
         liberarConfig(&config);
         return 1;
     }
+
+    sesiones = malloc(cap_sesiones * sizeof(SesionLauncher *));
+    if (!sesiones) {
+        fprintf(stderr, "[ialearner] Error malloc sesiones\n");
+        free(arrHilos);
+        liberarConfig(&config);
+        return 1;
+    }
     
     
     int server_sockfd = -1;
@@ -585,6 +591,7 @@ int main(int argc, char *argv[]) {
 
     if(server_sockfd >= 0) close(server_sockfd);
     free(arrHilos);
+    free(sesiones);
     liberarConfig(&config);
     return 0;
 
@@ -592,6 +599,7 @@ int main(int argc, char *argv[]) {
     limpiezaFinalError:
     if(server_sockfd >= 0) close(server_sockfd);
     free(arrHilos);
+    free(sesiones);
     liberarConfig(&config);
     return -1;
 
