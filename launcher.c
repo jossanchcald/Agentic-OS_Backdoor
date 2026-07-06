@@ -282,14 +282,15 @@ static int agregarVentana(pid_t pid, int id_local) {
     num_activas++;
     return num_ventanas++;
 }
-/* Busca una ventana por ID local. Retorna puntero o NULL. - O(n)*/
+
+/* Busca una ventana por ID local. Retorna puntero o NULL.*/
 static InfoVentana *buscarPorId(int id) {
     int idx = id - 1; // los IDs empiezan en 1, los indices en 0
     if (idx < 0 || (size_t)idx >= num_ventanas) return NULL;
     return &ventanas[idx];
 }
 
-/* Busca una ventana por PID. Retorna puntero o NULL. - O(n) */
+/* Busca una ventana por PID. Retorna puntero o NULL.*/
 static InfoVentana *buscarPorPid(pid_t pid) {
     for (size_t i = 0; i < num_ventanas; i++) {
         if (ventanas[i].pid == pid)
@@ -430,6 +431,7 @@ static void comandoCrear(int n) {
         printf("  Ventana #%d creada (PID %d)\n", id_local, (int)pid);
     }
 }
+
 /* Muestra el estado de todas las ventanas que hayan sido creadas*/
 static void comandoEstado(void) {
     pthread_mutex_lock(&mutex_ventanas);
@@ -608,9 +610,14 @@ static void bucleComandos(void) {
     }
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
 
-    if (parsearLauncherConf("./config/launcher.conf", &cfg_global) != 0) {
+    if (argc != 2) {
+        fprintf(stderr, "Uso: %s <archivo_launcher.conf>\n", argv[0]);
+        return 1;
+    }
+
+    if (parsearLauncherConf(argv[1], &cfg_global) != 0) {
         return 1;
     }
 
